@@ -1,7 +1,8 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   AppConfig,
   AppConfigView,
+  Attachment,
   AuthStatus,
   ClaudeEvent,
   CreateSkillArgs,
@@ -37,6 +38,13 @@ const api = {
 
   // 폴더 / 앱
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-folder'),
+
+  // 첨부 파일
+  pickFiles: (): Promise<Attachment[]> => ipcRenderer.invoke('dialog:pick-files'),
+  /** 끌어다 놓은 File 객체의 실제 경로 (렌더러에서는 file.path 를 쓸 수 없다) */
+  pathForFile: (file: File): string => webUtils.getPathForFile(file),
+  saveClipboardImage: (args: { base64: string; mime: string }): Promise<Attachment> => ipcRenderer.invoke('attach:save-clipboard', args),
+  attachmentPreview: (path: string): Promise<string | null> => ipcRenderer.invoke('attach:preview', path),
   defaultCwd: (): Promise<string> => ipcRenderer.invoke('app:default-cwd'),
   hostname: (): Promise<string> => ipcRenderer.invoke('app:hostname'),
   openPath: (p: string): Promise<string> => ipcRenderer.invoke('app:open-path', p),

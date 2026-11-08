@@ -624,3 +624,21 @@ button.ghost-btn:hover { border-color: var(--border); }
 .search-actions .small-btn { margin-top: 0; }
 .conn-mcp-more { display: flex; flex-direction: column; gap: 2px; }
 .conn-mcp-more > .small-btn { align-self: flex-start; margin-top: 2px; padding: 1px 4px; font-size: 11px; }
+
+/* ----- 첨부 파일 ----- */
+.composer.dragging { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.composer-left { display: flex; flex-direction: column; justify-content: flex-end; }
+button.attach-btn { width: 36px; height: 36px; padding: 0; font-size: 20px; line-height: 1; border-radius: 8px; color: var(--muted); }
+button.attach-btn:hover { color: var(--text); border-color: var(--accent); }
+.attach-list { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 2px 6px; }
+.attach-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); font-size: 12px; max-width: 260px; }
+.attach-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.attach-chip .attach-icon { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; }
+.attach-chip .attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip .attach-size { color: var(--muted); font-size: 11px; }
+.attach-chip button { background: transparent; border: none; color: var(--muted); padding: 0 2px; font-size: 13px; }
+.attach-chip button:hover { color: var(--err); }
+.msg.user .bubble .attach-list { padding: 6px 0 0; }
+.msg.user .bubble .attach-chip { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.3); color: #fff; }
+.msg.user .bubble .attach-chip .attach-size { color: rgba(255,255,255,0.7); }
+.msg.user .bubble .attach-chip img { width: 72px; height: 72px; }

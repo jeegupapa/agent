@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import type { Employee, TeamTask, ToolCallRecord } from '../../../shared/types'
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
+import type { Attachment, Employee, TeamTask, ToolCallRecord } from '../../../shared/types'
 import { ToolChip } from './ToolChip'
 import { Markdown } from './Markdown'
 import { STATUS_LABEL, isActive } from '../team/runtime'
 
 export type ChatItem =
-  | { id: string; type: 'user'; text: string }
+  | { id: string; type: 'user'; text: string; attachments?: Attachment[] }
   | { id: string; type: 'assistant'; text: string; streaming: boolean }
   | { id: string; type: 'tool'; callId: string }
   | { id: string; type: 'system'; text: string; isError?: boolean }
@@ -28,7 +28,7 @@ interface Props {
   tasks: TeamTask[]
   employees: Employee[]
   onToggleTeamMode: () => void
-  onSend: (prompt: string) => void
+  onSend: (prompt: string, attachments: Attachment[]) => void
   onInterrupt: () => void
   onSelectTool: (id: string) => void
   onReviewTask: (taskId: string, decision: 'approved' | 'changes_requested', comment: string) => void
@@ -37,11 +37,86 @@ interface Props {
   onRemember: (text: string) => void
 }
 
+/** 이미지 첨부의 미리보기(data URL). 세션 저장에는 넣지 않고 렌더러 메모리에만 둔다 */
+const previewCache = new Map<string, string>()
+
+function fmtSize(n?: number): string {
+  if (!n && n !== 0) return ''
+  if (n < 1024) return `${n}B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)}KB`
+  return `${(n / 1024 / 1024).toFixed(1)}MB`
+}
+
+function AttachChip(p: { a: Attachment; preview?: string; onRemove?: () => void }) {
+  const isImage = p.a.mime?.startsWith('image/')
+  return (
+    <span className="attach-chip" title={p.a.path}>
+      {isImage && p.preview ? <img src={p.preview} alt="" /> : <span className="attach-icon">{isImage ? '🖼️' : p.a.mime === 'application/pdf' ? '📕' : '📄'}</span>}
+      <span className="attach-name">{p.a.name}</span>
+      {p.a.size !== undefined && <span className="attach-size">{fmtSize(p.a.size)}</span>}
+      {p.onRemove && (
+        <button title="첨부 제거" onClick={p.onRemove}>
+          ✕
+        </button>
+      )}
+    </span>
+  )
+}
+
 export function Chat(p: Props) {
   const [draft, setDraft] = useState('')
   const [suggestIdx, setSuggestIdx] = useState(0)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [, setPreviewVersion] = useState(0)
+  const [dragging, setDragging] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  /** 첨부 추가 (경로 중복 제거, 이미지는 미리보기 로드) */
+  const addAttachments = (list: Attachment[]): void => {
+    if (list.length === 0) return
+    setAttachments((prev) => {
+      const seen = new Set(prev.map((a) => a.path))
+      return [...prev, ...list.filter((a) => a.path && !seen.has(a.path))]
+    })
+    for (const a of list) {
+      if (a.mime?.startsWith('image/') && !previewCache.has(a.path)) {
+        void window.api.attachmentPreview(a.path).then((url) => {
+          if (url) {
+            previewCache.set(a.path, url)
+            setPreviewVersion((v) => v + 1)
+          }
+        })
+      }
+    }
+    textareaRef.current?.focus()
+  }
+  const pickFiles = async (): Promise<void> => addAttachments(await window.api.pickFiles())
+  const onDrop = (e: DragEvent): void => {
+    e.preventDefault()
+    setDragging(false)
+    const files = [...e.dataTransfer.files]
+    addAttachments(
+      files
+        .map((f) => ({ name: f.name, path: window.api.pathForFile(f), size: f.size, mime: f.type || undefined }))
+        .filter((a) => a.path)
+    )
+  }
+  const onPaste = async (e: ClipboardEvent): Promise<void> => {
+    const images = [...e.clipboardData.items].filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+    if (images.length === 0) return
+    e.preventDefault()
+    for (const it of images) {
+      const blob = it.getAsFile()
+      if (!blob) continue
+      const base64 = await new Promise<string>((resolve) => {
+        const r = new FileReader()
+        r.onload = () => resolve(String(r.result).split(',')[1] ?? '')
+        r.readAsDataURL(blob)
+      })
+      addAttachments([await window.api.saveClipboardImage({ base64, mime: it.type })])
+    }
+  }
 
   // 메시지 목록 안에서만 스크롤한다. scrollIntoView 는 body 까지 끌어내려 사이드바·오른쪽 패널이 화면 밖으로 밀려났다.
   useEffect(() => {
@@ -58,10 +133,12 @@ export function Chat(p: Props) {
     }
   }, [p.insertRequest])
 
+  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !p.running
   const submit = (): void => {
-    if (!draft.trim() || p.running) return
-    p.onSend(draft)
+    if (!canSend) return
+    p.onSend(draft, attachments)
     setDraft('')
+    setAttachments([])
     textareaRef.current?.focus()
   }
 
@@ -112,7 +189,16 @@ export function Chat(p: Props) {
             case 'user':
               return (
                 <div key={it.id} className="msg user">
-                  <div className="bubble">{it.text}</div>
+                  <div className="bubble">
+                    {it.text}
+                    {it.attachments && it.attachments.length > 0 && (
+                      <div className="attach-list">
+                        {it.attachments.map((a) => (
+                          <AttachChip key={a.path} a={a} preview={previewCache.get(a.path)} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <button className="remember-btn" title="이 메시지를 메모리로 저장" onClick={() => p.onRemember(it.text)}>
                     💾
                   </button>
@@ -243,14 +329,40 @@ export function Chat(p: Props) {
               : 'Claude Code 가 직접 처리합니다'}
           </span>
         </div>
-        <div className="composer">
+        {attachments.length > 0 && (
+          <div className="attach-list">
+            {attachments.map((a) => (
+              <AttachChip
+                key={a.path}
+                a={a}
+                preview={previewCache.get(a.path)}
+                onRemove={() => setAttachments((prev) => prev.filter((x) => x.path !== a.path))}
+              />
+            ))}
+          </div>
+        )}
+        <div
+          className={`composer ${dragging ? 'dragging' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault()
+            if (!dragging) setDragging(true)
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+        >
+          <div className="composer-left">
+            <button className="attach-btn" title="파일 첨부 (끌어다 놓기, 이미지 붙여넣기도 됩니다)" onClick={pickFiles} disabled={p.running}>
+              +
+            </button>
+          </div>
           <textarea
             ref={textareaRef}
             value={draft}
+            onPaste={onPaste}
             placeholder={
               p.teamMode
-                ? '팀에게 맡길 요청을 적으세요… (Enter 전송, Shift+Enter 줄바꿈)'
-                : '메시지를 입력하세요… (Enter 전송, Shift+Enter 줄바꿈, / 로 스킬 선택)'
+                ? '팀에게 맡길 요청을 적으세요… (Enter 전송, Shift+Enter 줄바꿈, 파일은 + 또는 끌어다 놓기)'
+                : '메시지를 입력하세요… (Enter 전송, Shift+Enter 줄바꿈, / 로 스킬 선택, 파일은 + 또는 끌어다 놓기)'
             }
             rows={3}
             onChange={(e) => {
@@ -292,7 +404,7 @@ export function Chat(p: Props) {
                 중단
               </button>
             ) : (
-              <button className="primary" onClick={submit} disabled={!draft.trim()}>
+              <button className="primary" onClick={submit} disabled={!canSend}>
                 {p.teamMode ? '팀에게' : '전송'}
               </button>
             )}

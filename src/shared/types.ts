@@ -218,6 +218,17 @@ export interface TeamStartArgs {
   memory?: string
 }
 
+// ---------- 첨부 파일 ----------
+
+/** 채팅에 첨부한 파일. 경로를 프롬프트에 적어 주면 Claude Code 가 Read 도구로 읽는다(이미지·PDF 포함) */
+export interface Attachment {
+  name: string
+  path: string
+  size?: number
+  /** image/png 등. 모르면 비움 */
+  mime?: string
+}
+
 // ---------- 메모리 (채팅에서 "기억해" 로 저장한 내용) ----------
 
 /** 사용자가 저장한 메모리 한 건. 세션 시작 시 시스템 프롬프트에 붙어 Claude 가 참고한다 */

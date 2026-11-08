@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { execFile, spawn } from 'child_process'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { homedir, hostname } from 'os'
-import { dirname, join } from 'path'
+import { basename, dirname, extname, join } from 'path'
 import { createRequire } from 'module'
 import { ClaudeRunner } from './claude'
 import { ConfigStore } from './config'
@@ -11,6 +11,7 @@ import { TeamRunner } from './team'
 import { createSkill, listSkills, skillsDir } from './skills'
 import type {
   AppConfig,
+  Attachment,
   AuthStatus,
   CreateSkillArgs,
   DispatchArgs,
@@ -36,6 +37,33 @@ function bundledClaudeExe(): string | null {
   } catch {
     return null
   }
+}
+
+const MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.md': 'text/markdown',
+  '.txt': 'text/plain',
+  '.json': 'application/json',
+  '.csv': 'text/csv'
+}
+function mimeOf(p: string): string {
+  return MIME[extname(p).toLowerCase()] ?? ''
+}
+/** 첨부 파일 메타 (이름·경로·크기·종류) */
+function attachmentInfo(p: string, mime?: string): Attachment {
+  let size: number | undefined
+  try {
+    size = statSync(p).size
+  } catch {
+    /* 없으면 비움 */
+  }
+  return { name: basename(p), path: p, size, mime: mime ?? mimeOf(p) ?? undefined }
 }
 
 /**
@@ -189,6 +217,41 @@ app.whenReady().then(() => {
   ipcMain.handle('dialog:pick-folder', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     return result.canceled ? null : result.filePaths[0]
+  })
+  // ----- 첨부 파일 -----
+  ipcMain.handle('dialog:pick-files', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: '모든 파일', extensions: ['*'] },
+        { name: '이미지', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+        { name: '문서', extensions: ['pdf', 'md', 'txt', 'csv', 'json'] }
+      ]
+    })
+    if (result.canceled) return []
+    return result.filePaths.map((p) => attachmentInfo(p))
+  })
+  // 클립보드에서 붙여넣은 이미지는 userData/attachments 에 파일로 저장하고 그 경로를 쓴다
+  ipcMain.handle('attach:save-clipboard', (_e, args: { base64: string; mime: string }) => {
+    const ext = args.mime === 'image/jpeg' ? 'jpg' : args.mime === 'image/gif' ? 'gif' : args.mime === 'image/webp' ? 'webp' : 'png'
+    const dir = join(app.getPath('userData'), 'attachments')
+    mkdirSync(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const file = join(dir, `clipboard-${stamp}.${ext}`)
+    writeFileSync(file, Buffer.from(args.base64, 'base64'))
+    return attachmentInfo(file, args.mime)
+  })
+  // 이미지 미리보기용 data URL (8MB 이하만)
+  ipcMain.handle('attach:preview', (_e, p: string) => {
+    try {
+      const st = statSync(p)
+      if (st.size > 8 * 1024 * 1024) return null
+      const mime = mimeOf(p)
+      if (!mime.startsWith('image/')) return null
+      return `data:${mime};base64,${readFileSync(p).toString('base64')}`
+    } catch {
+      return null
+    }
   })
   ipcMain.handle('app:default-cwd', () => process.cwd())
   ipcMain.handle('app:hostname', () => hostname())

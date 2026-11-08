@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AppConfig,
   AppConfigView,
+  Attachment,
   AuthStatus,
   ClaudeEvent,
   Employee,
@@ -303,9 +304,10 @@ export default function App() {
     return e
   }
 
-  const dispatchToTeam = async (prompt: string): Promise<void> => {
+  const dispatchToTeam = async (rawPrompt: string, attachments: Attachment[] = []): Promise<void> => {
     const requestId = `req-${Date.now()}`
-    setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: prompt }])
+    const prompt = withAttachments(rawPrompt, attachments)
+    setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: rawPrompt, attachments: attachments.length ? attachments : undefined }])
     setRunning(true)
     setStatus('🧭 팀장이 요청을 읽고 직원에게 배분하는 중…')
     try {
@@ -600,17 +602,19 @@ export default function App() {
     ])
   }
 
-  const send = async (prompt: string): Promise<void> => {
-    if (!prompt.trim() || running) return
+  const send = async (rawPrompt: string, attachments: Attachment[] = []): Promise<void> => {
+    if ((!rawPrompt.trim() && attachments.length === 0) || running) return
     // "기억해: …" 는 Claude 에게 보내지 않고 메모리에 저장한다
-    const rememberText = parseRememberCommand(prompt)
+    const rememberText = attachments.length === 0 ? parseRememberCommand(rawPrompt) : null
     if (rememberText) {
-      setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: prompt }])
+      setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: rawPrompt }])
       rememberFromChat(rememberText, 'command')
       return
     }
-    if (teamChat) return dispatchToTeam(prompt)
-    setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: prompt }])
+    if (teamChat) return dispatchToTeam(rawPrompt, attachments)
+    // 첨부 파일은 경로로 넘긴다. Claude Code 의 Read 도구가 텍스트·이미지·PDF 를 읽는다
+    const prompt = withAttachments(rawPrompt, attachments)
+    setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: rawPrompt, attachments: attachments.length ? attachments : undefined }])
     setRunning(true)
     setStatus('요청 중…')
     try {
@@ -944,6 +948,13 @@ export default function App() {
       )}
     </div>
   )
+}
+
+/** 첨부 파일 경로를 프롬프트 끝에 덧붙인다. 직원 작업 지시에도 그대로 들어간다 */
+function withAttachments(prompt: string, atts: Attachment[]): string {
+  if (atts.length === 0) return prompt
+  const lines = atts.map((a) => `- ${a.path}${a.mime ? ` (${a.mime})` : ''}`)
+  return `${prompt.trim() || '첨부한 파일을 확인하고 내용을 설명해 주세요.'}\n\n첨부 파일 (Read 도구로 읽어서 참고하세요):\n${lines.join('\n')}`
 }
 
 export function isEditTool(name: string): boolean {
