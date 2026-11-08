@@ -451,6 +451,11 @@ export interface SavedSessionMeta {
   numTurns: number
   /** 저장한 PC 이름 (다른 PC 에서는 이어가기 불가 안내용) */
   host: string
+  /**
+   * resume 에 쓸 Claude Code 세션 id. 문서 id 는 앱이 만든 값이라 따로 둔다
+   * (팀에게 맡기기만 한 대화처럼 Claude 세션이 없을 수도 있다). 없으면 예전 문서: id 가 곧 Claude 세션 id
+   */
+  claudeSessionId?: string
 }
 
 // ---------- 앱 자동 업데이트 ----------

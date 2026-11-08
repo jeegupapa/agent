@@ -105,8 +105,12 @@ export default function App() {
   const [fbUser, setFbUser] = useState<fb.FbUser | null>(null)
   const [savedSessions, setSavedSessions] = useState<SavedSessionMeta[]>([])
   const [sync, setSync] = useState<SyncState>({ kind: 'idle' })
-  // 마지막 result 이후 아직 Firestore 에 저장하지 않은 변경이 있는지
+  // 마지막 저장 이후 아직 Firestore 에 저장하지 않은 변경이 있는지
   const dirty = useRef(false)
+  // Firestore 문서 id. Claude 세션 id 와 별개로 앱이 만든다 (팀에게 맡기기만 한 대화도 저장되도록)
+  const docId = useRef<string | null>(null)
+  // 저장된 세션을 불러온 직후의 items 변경은 "변경"으로 치지 않는다
+  const skipDirtyOnce = useRef(false)
   // 세션을 처음 저장한 시각 (문서의 createdAt 유지용)
   const createdAt = useRef<number | null>(null)
   // Firestore 에서 불러온(복원한) 세션인지 — 이 PC 에서 이어가지 못할 수 있다
@@ -404,42 +408,65 @@ export default function App() {
   // 오른쪽 패널에 보여줄 도구 호출: 팀 모드면 선택한 작업의 것
   const panelCalls = mode === 'team' ? (selectedTaskId ? runtimeRef.current[selectedTaskId]?.toolCalls ?? [] : []) : toolCalls
 
-  // 한 턴이 끝나고(running=false) 저장할 변경이 있으면 Firestore 에 저장
+  // 대화 내용이 바뀌면 저장 대상이 된다 (일반 답변, 팀장 배분·보고 카드, 메모리 안내 등 모두)
   useEffect(() => {
-    if (running || !dirty.current || !sessionId || !fbUser || !fbSettings?.enabled || !fbSettings.saveSessions) return
+    if (skipDirtyOnce.current) {
+      skipDirtyOnce.current = false
+      return
+    }
+    if (items.some((it) => it.type === 'user')) dirty.current = true
+  }, [items])
+
+  // Claude 가 응답 중이 아닐 때 저장할 변경이 있으면 1.5초 뒤 Firestore 에 저장한다.
+  // 문서 id 는 앱이 만들고, resume 용 Claude 세션 id 는 claudeSessionId 로 따로 둔다
+  useEffect(() => {
+    if (running || !dirty.current || !fbUser || !fbSettings?.enabled || !fbSettings.saveSessions) return
     if (!items.some((it) => it.type === 'user')) return
-    dirty.current = false
-    const firstUser = items.find((it) => it.type === 'user')
-    const title = firstUser && firstUser.type === 'user' ? firstUser.text.trim().slice(0, 60) : '(제목 없음)'
-    const now = Date.now()
-    createdAt.current ??= now
-    setSync({ kind: 'saving' })
-    fb.saveSession(fbUser.uid, {
-      id: sessionId,
-      title,
-      cwd,
-      model: session?.model,
-      createdAt: createdAt.current,
-      updatedAt: now,
-      numTurns: usage.numTurns,
-      host: hostname,
-      usage,
-      items,
-      toolCalls
-    })
-      .then(() => setSync({ kind: 'saved', at: now }))
-      .catch((e) => setSync({ kind: 'error', message: e instanceof Error ? e.message : String(e) }))
+    const uid = fbUser.uid
+    const t = setTimeout(() => {
+      dirty.current = false
+      const id = (docId.current ??= sessionId ?? crypto.randomUUID())
+      const firstUser = items.find((it) => it.type === 'user')
+      const title = firstUser && firstUser.type === 'user' ? firstUser.text.trim().slice(0, 60) : '(제목 없음)'
+      const now = Date.now()
+      createdAt.current ??= now
+      setSync({ kind: 'saving' })
+      fb.saveSession(uid, {
+        id,
+        // undefined 는 저장 시 빠지므로 빈 문자열로 "Claude 세션 없음" 을 남긴다
+        claudeSessionId: sessionId ?? '',
+        title,
+        cwd,
+        model: session?.model,
+        createdAt: createdAt.current,
+        updatedAt: now,
+        numTurns: usage.numTurns,
+        host: hostname,
+        usage,
+        items,
+        toolCalls
+      })
+        .then(() => setSync({ kind: 'saved', at: now }))
+        .catch((e) => {
+          dirty.current = true
+          setSync({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
+        })
+    }, 1500)
+    return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, sessionId, fbUser, fbKey])
+  }, [running, items, sessionId, fbUser, fbKey])
 
   const openSavedSession = async (id: string): Promise<void> => {
     if (running || !fbUser) return
     try {
       const s = await fb.loadSession(fbUser.uid, id)
       if (!s) return
-      setSessionId(s.id)
+      // 예전 문서는 id 가 곧 Claude 세션 id 였다. 새 문서는 claudeSessionId 를 따로 둔다 (없을 수도 있음)
+      docId.current = s.id
+      setSessionId(s.claudeSessionId === undefined ? s.id : s.claudeSessionId || undefined)
       setSession(null)
       setCwd(s.cwd)
+      skipDirtyOnce.current = true
       setItems(s.items ?? [])
       setToolCalls(s.toolCalls ?? [])
       setUsage(s.usage ?? EMPTY_USAGE)
@@ -464,7 +491,10 @@ export default function App() {
   const deleteSavedSession = async (id: string): Promise<void> => {
     if (!fbUser) return
     await fb.deleteSession(fbUser.uid, id).catch(() => undefined)
-    if (id === sessionId) createdAt.current = null
+    if (id === docId.current) {
+      createdAt.current = null
+      docId.current = null
+    }
   }
 
   const handleEvent = useCallback((ev: ClaudeEvent) => {
@@ -669,6 +699,7 @@ export default function App() {
     setUsage(EMPTY_USAGE)
     setSelectedTool(null)
     createdAt.current = null
+    docId.current = null
     restored.current = false
     dirty.current = false
     setSync({ kind: 'idle' })
