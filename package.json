@@ -27,7 +27,8 @@
     "publish": {
       "provider": "github",
       "owner": "jeegupapa",
-      "repo": "agent"
+      "repo": "agent",
+      "releaseType": "release"
     },
     "win": {
       "target": [
