@@ -46,7 +46,17 @@ jobs:
         run: npm run typecheck
 
       - name: Build installer
-        run: npx electron-vite build && npx electron-builder --win --publish never
+        shell: bash
+        # electron-builder downloads NSIS/winCodeSign from GitHub Releases, which occasionally returns 504.
+        # Retry a few times before giving up.
+        run: |
+          npx electron-vite build
+          for attempt in 1 2 3 4; do
+            if npx electron-builder --win --publish never; then exit 0; fi
+            echo "electron-builder failed (attempt $attempt), retrying in 90s..."
+            sleep 90
+          done
+          exit 1
 
       - name: List build output
         shell: bash
