@@ -4,12 +4,16 @@ import { toolIcon } from './ToolChip'
 
 interface Props {
   request: PermissionRequest
+  /** 팀 작업이면 "민준 · 로그인 화면 개선" 같은 출처 설명 */
+  context?: string
+  /** 대기 중인 다른 요청 수 */
+  queued?: number
   onAllow: () => void
   onAlwaysAllow: () => void
   onDeny: () => void
 }
 
-export function PermissionDialog({ request, onAllow, onAlwaysAllow, onDeny }: Props) {
+export function PermissionDialog({ request, context, queued = 0, onAllow, onAlwaysAllow, onDeny }: Props) {
   const i = request.input
   const isEdit = request.toolName === 'Edit'
   const isWrite = request.toolName === 'Write'
@@ -21,7 +25,10 @@ export function PermissionDialog({ request, onAllow, onAlwaysAllow, onDeny }: Pr
         <h3>
           {toolIcon(request.toolName)} 권한 요청: <b>{request.toolName}</b>
         </h3>
-        <p className="muted">Claude가 아래 작업을 실행하려고 합니다. 허용할까요?</p>
+        <p className="muted">
+          {context ? <><b>{context}</b> 이(가) 아래 작업을 실행하려고 합니다. 허용할까요?</> : 'Claude가 아래 작업을 실행하려고 합니다. 허용할까요?'}
+          {queued > 0 && <span className="badge" style={{ marginLeft: 8 }}>대기 {queued}</span>}
+        </p>
 
         {isShell && (
           <pre className="cmd">

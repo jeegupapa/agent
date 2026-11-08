@@ -3,6 +3,8 @@ import type {
   AppConfig,
   AppConfigView,
   ClaudeEvent,
+  Employee,
+  TeamTask,
   PermissionRequest,
   PermissionMode,
   PlanWindow,
@@ -21,6 +23,9 @@ import { SettingsDialog } from './components/SettingsDialog'
 import type { SyncState } from './components/FirebasePanel'
 import * as fb from './firebase'
 import { Resizer } from './components/Resizer'
+import { TeamView } from './team/TeamView'
+import { useTeamStore } from './team/store'
+import { EMPTY_RUNTIME, applyEvent, deriveTaskPatch, isActive, type TaskRuntime } from './team/runtime'
 import {
   DEFAULT_LAYOUT,
   LIMITS,
@@ -64,7 +69,17 @@ export default function App() {
   const [toolCalls, setToolCalls] = useState<ToolCallRecord[]>([])
   const [usage, setUsage] = useState<UsageSummary>(EMPTY_USAGE)
   const [plan, setPlan] = useState<PlanUsage | null>(null)
-  const [permission, setPermission] = useState<PermissionRequest | null>(null)
+  // 권한 요청은 여러 작업에서 동시에 올 수 있어 큐로 둔다. 맨 앞 것을 보여준다
+  const [permissions, setPermissions] = useState<PermissionRequest[]>([])
+  const permission = permissions[0] ?? null
+  const [mode, setMode] = useState<'chat' | 'team'>(() =>
+    localStorage.getItem('claude-cli-studio.mode') === 'team' ? 'team' : 'chat'
+  )
+  useEffect(() => localStorage.setItem('claude-cli-studio.mode', mode), [mode])
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  // 작업별 실시간 트랜스크립트. ref 에 두고 버전 카운터로 다시 그린다 (이벤트 핸들러 클로저 문제 회피)
+  const runtimeRef = useRef<Record<string, TaskRuntime>>({})
+  const [, setRuntimeVersion] = useState(0)
   const [rightTab, setRightTab] = useState<RightTab>('tools')
   const [selectedTool, setSelectedTool] = useState<string | null>(null)
   const [insertRequest, setInsertRequest] = useState<{ text: string; nonce: number } | null>(null)
@@ -155,6 +170,100 @@ export default function App() {
       setSync({ kind: 'error', message: e.message })
     )
   }, [fbUser, fbSettings?.enabled])
+
+  // ----- 팀 (직원 에이전트) -----
+  const team = useTeamStore(fbUser, !!fbSettings?.enabled)
+  const patchTaskRef = useRef(team.patchTask)
+  patchTaskRef.current = team.patchTask
+  const teamRef = useRef(team)
+  teamRef.current = team
+
+  // 작업 이벤트 → 런타임 + 작업 레코드
+  useEffect(() => {
+    return window.api.onTeamEvent(({ taskId, event }) => {
+      const prev = runtimeRef.current[taskId] ?? EMPTY_RUNTIME
+      const next = applyEvent(prev, event)
+      runtimeRef.current = { ...runtimeRef.current, [taskId]: next }
+      setRuntimeVersion((v) => v + 1)
+      patchTaskRef.current(taskId, (t) => deriveTaskPatch(t, event, next) ?? {})
+    })
+  }, [])
+
+  // 팀 작업의 권한 요청이 오면 그 작업을 "승인 필요" 로 표시
+  useEffect(() => {
+    const p = permissions[permissions.length - 1]
+    if (p?.taskId) patchTaskRef.current(p.taskId, (t) => (isActive(t.status) ? { status: 'waiting_permission' } : {}))
+  }, [permissions])
+
+  // 앱을 다시 켰을 때 "작업 중"으로 남아 있는 작업은 실제로는 죽었으므로 중단 처리
+  const reconciled = useRef(false)
+  useEffect(() => {
+    if (reconciled.current || team.tasks.length === 0) return
+    reconciled.current = true
+    window.api.teamRunning().then((ids) => {
+      for (const t of teamRef.current.tasks) {
+        if (isActive(t.status) && !ids.includes(t.id)) {
+          teamRef.current.upsertTask({ ...t, status: 'stopped', finishedAt: Date.now(), error: t.error ?? '앱이 종료되어 작업이 중단되었습니다. "처음부터 다시 실행"으로 다시 맡길 수 있습니다.' })
+        }
+      }
+    })
+  }, [team.tasks.length])
+
+  const startTask = (task: TeamTask, followUp?: string): void => {
+    const employee = team.employees.find((e) => e.id === task.employeeId)
+    if (!employee) return
+    const started: TeamTask = {
+      ...task,
+      status: followUp ? 'changes_requested' : 'running',
+      startedAt: followUp ? task.startedAt ?? Date.now() : Date.now(),
+      finishedAt: undefined,
+      error: undefined,
+      sessionId: followUp ? task.sessionId : undefined,
+      progress: followUp ? { ...task.progress, lastTool: undefined } : { toolUses: 0 }
+    }
+    team.upsertTask(started)
+    const prevRt = followUp ? runtimeRef.current[task.id] ?? EMPTY_RUNTIME : EMPTY_RUNTIME
+    const userText = followUp ?? `# ${task.title}\n\n${task.instructions}`
+    runtimeRef.current = {
+      ...runtimeRef.current,
+      [task.id]: { ...prevRt, streamingId: null, items: [...prevRt.items, { id: `u-${Date.now()}`, type: 'user', text: userText }] }
+    }
+    setRuntimeVersion((v) => v + 1)
+    setMode('team')
+    window.api
+      .teamStart({ task: started, employee, followUp })
+      .catch((err) => {
+        patchTaskRef.current(task.id, { status: 'failed', finishedAt: Date.now(), error: err instanceof Error ? err.message : String(err) })
+      })
+  }
+
+  const reviewTask = (id: string, decision: 'approved' | 'changes_requested', comment: string): void => {
+    const t = team.tasks.find((x) => x.id === id)
+    if (!t) return
+    const reviews = [...t.reviews, { at: Date.now(), decision, comment: comment || undefined }]
+    if (decision === 'approved') {
+      team.upsertTask({ ...t, status: 'approved', reviews })
+      return
+    }
+    const round = t.round + 1
+    const followUp =
+      `# 수정 요청 (${round}차)\n\n${comment}\n\n` +
+      `이전 작업을 이어서 반영하세요. 끝나면 다시 "## 보고" 형식으로 보고하세요.`
+    startTask({ ...t, reviews, round }, followUp)
+  }
+
+  const teamSummary = {
+    running: team.tasks.filter((t) => isActive(t.status)).length,
+    attention: team.tasks.filter((t) => t.status === 'needs_review' || t.status === 'waiting_permission' || t.status === 'failed').length
+  }
+  const permissionContext = (() => {
+    if (!permission?.taskId) return undefined
+    const t = team.tasks.find((x) => x.id === permission.taskId)
+    const e = t && team.employees.find((x) => x.id === t.employeeId)
+    return t ? `${e ? `${e.emoji} ${e.name}` : '직원'} · ${t.title}` : '팀 작업'
+  })()
+  // 오른쪽 패널에 보여줄 도구 호출: 팀 모드면 선택한 작업의 것
+  const panelCalls = mode === 'team' ? (selectedTaskId ? runtimeRef.current[selectedTaskId]?.toolCalls ?? [] : []) : toolCalls
 
   // 한 턴이 끝나고(running=false) 저장할 변경이 있으면 Firestore 에 저장
   useEffect(() => {
@@ -329,7 +438,7 @@ export default function App() {
 
   useEffect(() => {
     const offEvent = window.api.onEvent(handleEvent)
-    const offPerm = window.api.onPermission((req) => setPermission(req))
+    const offPerm = window.api.onPermission((req) => setPermissions((q) => [...q, req]))
     return () => {
       offEvent()
       offPerm()
@@ -407,19 +516,35 @@ export default function App() {
   const answerPermission = (allow: boolean, always = false): void => {
     if (!permission) return
     window.api.answerPermission({ requestId: permission.requestId, allow, always })
-    if (!allow) {
+    if (permission.taskId) {
+      // 팀 작업: 승인 대기 상태를 풀어 준다
+      const tid = permission.taskId
+      patchTaskRef.current(tid, (t) => (t.status === 'waiting_permission' ? { status: 'running' } : {}))
+      if (!allow) {
+        const rt = runtimeRef.current[tid]
+        if (rt) {
+          runtimeRef.current[tid] = {
+            ...rt,
+            toolCalls: rt.toolCalls.map((c) =>
+              c.status === 'running' && c.name === permission.toolName ? { ...c, status: 'denied' } : c
+            )
+          }
+          setRuntimeVersion((v) => v + 1)
+        }
+      }
+    } else if (!allow) {
       setToolCalls((prev) =>
         prev.map((c) =>
           c.status === 'running' && c.name === permission.toolName ? { ...c, status: 'denied' } : c
         )
       )
     }
-    setPermission(null)
+    setPermissions((q) => q.slice(1))
   }
 
   const selectTool = (id: string): void => {
     setSelectedTool(id)
-    const call = toolCalls.find((c) => c.id === id)
+    const call = panelCalls.find((c) => c.id === id)
     setRightTab(call && isEditTool(call.name) ? 'diff' : 'tools')
     openRight()
   }
@@ -443,6 +568,9 @@ export default function App() {
         plan={plan}
         running={running}
         updateStatus={updateStatus}
+        mode={mode}
+        teamSummary={teamSummary}
+        onModeChange={setMode}
         history={{
           enabled: !!(config?.firebase.enabled && config.firebase.config),
           cwd,
@@ -484,6 +612,36 @@ export default function App() {
         >
           {layout.rightOpen ? '▶' : `🔧${toolCalls.length ? ` ${toolCalls.length}` : ''}`}
         </button>
+      {mode === 'team' ? (
+        <TeamView
+          employees={team.employees}
+          tasks={team.tasks}
+          runtime={runtimeRef.current}
+          selectedTaskId={selectedTaskId}
+          defaultCwd={cwd}
+          backend={team.backend}
+          storeError={team.error}
+          onSelectTask={(id) => {
+            setSelectedTaskId(id)
+            setSelectedTool(null)
+          }}
+          onSaveEmployee={team.upsertEmployee}
+          onDeleteEmployee={team.removeEmployee}
+          onStartTask={(t) => startTask(t)}
+          onRerunTask={(t) => startTask({ ...t, sessionId: undefined, round: 0, reviews: t.reviews })}
+          onStopTask={(id) => {
+            window.api.teamStop(id)
+            patchTaskRef.current(id, { status: 'stopped', finishedAt: Date.now() })
+          }}
+          onDeleteTask={(id) => {
+            team.removeTask(id)
+            const { [id]: _drop, ...rest } = runtimeRef.current
+            runtimeRef.current = rest
+          }}
+          onReview={reviewTask}
+          onSelectTool={selectTool}
+        />
+      ) : (
       <Chat
         items={items}
         toolCalls={toolCalls}
@@ -495,6 +653,7 @@ export default function App() {
         onInterrupt={() => window.api.interrupt()}
         onSelectTool={selectTool}
       />
+      )}
         {layout.rightOpen && (
           <Resizer
             side="right"
@@ -507,16 +666,16 @@ export default function App() {
       <aside className="right">
         <div className="tabs">
           <button className={rightTab === 'tools' ? 'active' : ''} onClick={() => setRightTab('tools')}>
-            도구 호출 ({toolCalls.length})
+            도구 호출 ({panelCalls.length})
           </button>
           <button className={rightTab === 'diff' ? 'active' : ''} onClick={() => setRightTab('diff')}>
             변경 사항
           </button>
         </div>
         {rightTab === 'tools' ? (
-          <ToolLog calls={toolCalls} selected={selectedTool} onSelect={selectTool} />
+          <ToolLog calls={panelCalls} selected={selectedTool} onSelect={selectTool} />
         ) : (
-          <DiffPanel calls={toolCalls} selected={selectedTool} onSelect={setSelectedTool} />
+          <DiffPanel calls={panelCalls} selected={selectedTool} onSelect={setSelectedTool} />
         )}
       </aside>
       ) : (
@@ -525,6 +684,8 @@ export default function App() {
       {permission && (
         <PermissionDialog
           request={permission}
+          context={permissionContext}
+          queued={permissions.length - 1}
           onAllow={() => answerPermission(true)}
           onAlwaysAllow={() => answerPermission(true, true)}
           onDeny={() => answerPermission(false)}

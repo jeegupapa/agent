@@ -22,6 +22,9 @@ interface Props {
   plan: PlanUsage | null
   running: boolean
   updateStatus: UpdateStatus | null
+  mode: 'chat' | 'team'
+  teamSummary: { running: number; attention: number }
+  onModeChange: (m: 'chat' | 'team') => void
   history: {
     enabled: boolean
     cwd: string
@@ -216,6 +219,17 @@ export function Sidebar(p: Props) {
         <span className="dot" /> Claude CLI Studio
       </h1>
       <UpdateBanner status={p.updateStatus} running={p.running} onOpen={() => p.onOpenSettings('update')} />
+
+      <div className="mode-switch">
+        <button className={p.mode === 'chat' ? 'active' : ''} onClick={() => p.onModeChange('chat')}>
+          💬 채팅
+        </button>
+        <button className={p.mode === 'team' ? 'active' : ''} onClick={() => p.onModeChange('team')}>
+          👥 팀
+          {p.teamSummary.running > 0 && <span className="pill warn">{p.teamSummary.running}</span>}
+          {p.teamSummary.attention > 0 && <span className="pill danger">{p.teamSummary.attention}</span>}
+        </button>
+      </div>
 
       <section>
         <h2>작업 폴더</h2>

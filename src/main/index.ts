@@ -7,6 +7,7 @@ import { createRequire } from 'module'
 import { ClaudeRunner } from './claude'
 import { ConfigStore } from './config'
 import { AppUpdater } from './updater'
+import { TeamRunner } from './team'
 import { createSkill, listSkills, skillsDir } from './skills'
 import type {
   AppConfig,
@@ -14,10 +15,12 @@ import type {
   McpServerEntry,
   PermissionAnswer,
   SendPromptArgs,
-  SkillScope
+  SkillScope,
+  TeamStartArgs
 } from '../shared/types'
 
 let runner: ClaudeRunner | null = null
+let team: TeamRunner | null = null
 let updater: AppUpdater | null = null
 const store = new ConfigStore()
 
@@ -83,6 +86,7 @@ function createWindow(): void {
   })
 
   runner = new ClaudeRunner(win, () => ({ config: store.load(), apiKey: store.getApiKey() }))
+  team = new TeamRunner(win, () => ({ config: store.load(), apiKey: store.getApiKey() }))
   updater = new AppUpdater(
     win,
     () => store.load().update,
@@ -112,8 +116,19 @@ app.whenReady().then(() => {
     await runner?.interrupt()
   })
   ipcMain.on('claude:permission-answer', (_e, answer: PermissionAnswer) => {
-    runner?.answerPermission(answer)
+    // 팀 작업의 요청이면 그쪽 러너가 받고, 아니면 메인 채팅 러너
+    if (!team?.answerPermission(answer)) runner?.answerPermission(answer)
   })
+
+  // ----- 팀 (직원 에이전트) -----
+  ipcMain.handle('team:start', async (_e, args: TeamStartArgs) => {
+    if (!team) throw new Error('창이 준비되지 않았습니다.')
+    await team.start(args)
+  })
+  ipcMain.handle('team:stop', async (_e, taskId: string) => {
+    await team?.stop(taskId)
+  })
+  ipcMain.handle('team:running', () => team?.runningTaskIds ?? [])
 
   // ----- 폴더 / 앱 -----
   ipcMain.handle('dialog:pick-folder', async () => {
@@ -186,6 +201,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  void team?.stopAll()
 })
 
 app.on('window-all-closed', () => {

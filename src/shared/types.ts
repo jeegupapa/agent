@@ -88,6 +88,8 @@ export interface PermissionRequest {
   requestId: string
   toolName: string
   input: Record<string, unknown>
+  /** 팀 작업에서 온 요청이면 해당 작업 id */
+  taskId?: string
 }
 
 export interface PermissionAnswer {
@@ -103,7 +105,167 @@ export interface SendPromptArgs {
   cwd: string
   sessionId?: string
   permissionMode: PermissionMode
+  /** Claude Code 기본 시스템 프롬프트 뒤에 덧붙일 역할 지시문 (직원용) */
+  systemPromptAppend?: string
+  /** 비우면 CLI 기본 모델 */
+  model?: string
+  /** 허용 도구 목록 (비우면 전부) */
+  allowedTools?: string[]
+  disallowedTools?: string[]
+  maxTurns?: number
 }
+
+// ---------- 팀 (직원 에이전트) ----------
+
+/** 역할과 지시문을 가진 직원 에이전트 정의 */
+export interface Employee {
+  id: string
+  name: string
+  /** 직함 (예: 프론트엔드 개발자) */
+  role: string
+  /** 아바타용 이모지 */
+  emoji: string
+  color: string
+  /** 전문 분야 한 줄 설명 */
+  specialty: string
+  /** 역할 지시문. Claude Code 기본 프롬프트 뒤에 덧붙는다 */
+  instructions: string
+  model?: string
+  permissionMode: PermissionMode
+  /** 기본 작업 폴더 (비우면 작업 지시 때 지정) */
+  defaultCwd?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type TaskStatus =
+  | 'queued'
+  | 'running'
+  | 'waiting_permission'
+  | 'needs_review'
+  | 'approved'
+  | 'changes_requested'
+  | 'failed'
+  | 'stopped'
+
+export interface TaskReview {
+  at: number
+  decision: 'approved' | 'changes_requested'
+  comment?: string
+}
+
+/** 직원에게 지시한 작업 하나 */
+export interface TeamTask {
+  id: string
+  employeeId: string
+  title: string
+  instructions: string
+  cwd: string
+  status: TaskStatus
+  createdAt: number
+  startedAt?: number
+  finishedAt?: number
+  /** 이어서 지시(수정 요청)할 때 resume 에 쓰는 세션 id */
+  sessionId?: string
+  /** 진행 요약 */
+  progress: {
+    toolUses: number
+    lastTool?: string
+    /** 마지막 어시스턴트 텍스트 일부 */
+    lastText?: string
+    updatedAt?: number
+    numTurns?: number
+    totalTokens?: number
+    costUsd?: number
+  }
+  /** 작업이 끝났을 때 직원이 남긴 최종 보고 (마지막 어시스턴트 메시지) */
+  report?: string
+  error?: string
+  reviews: TaskReview[]
+  /** 수정 요청 횟수 */
+  round: number
+}
+
+/** 메인 프로세스 → 렌더러: 팀 작업 이벤트 (ClaudeEvent 에 taskId 를 붙인 것) */
+export interface TeamEvent {
+  taskId: string
+  event: ClaudeEvent
+}
+
+export interface TeamStartArgs {
+  task: TeamTask
+  employee: Employee
+  /** 수정 요청 등 추가 지시. 있으면 이것을 프롬프트로 쓰고 세션을 이어간다 */
+  followUp?: string
+}
+
+/** 바로 쓸 수 있는 직원 템플릿 */
+export const EMPLOYEE_PRESETS: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>[] = [
+  {
+    name: '민준',
+    role: '프론트엔드 개발자',
+    emoji: '🎨',
+    color: '#5b8def',
+    specialty: 'React / TypeScript / CSS. 접근성과 반응형을 챙기는 UI 구현',
+    instructions:
+      '당신은 시니어 프론트엔드 개발자입니다. 기존 코드 스타일과 컴포넌트 구조를 먼저 파악한 뒤 작업하세요. UI 변경은 접근성(키보드·명도 대비)과 반응형을 확인합니다. 타입 오류가 없게 하고, 가능하면 빌드나 타입체크를 실행해 검증하세요.',
+    permissionMode: 'acceptEdits'
+  },
+  {
+    name: '서연',
+    role: '백엔드 개발자',
+    emoji: '🛠️',
+    color: '#4caf7d',
+    specialty: 'API, 데이터 모델, 성능과 에러 처리',
+    instructions:
+      '당신은 시니어 백엔드 개발자입니다. 입력 검증, 에러 처리, 로깅을 빠뜨리지 말고, 외부 호출에는 타임아웃을 두세요. 변경 전후로 테스트를 실행하고 결과를 보고에 포함하세요.',
+    permissionMode: 'acceptEdits'
+  },
+  {
+    name: '도윤',
+    role: 'QA 엔지니어',
+    emoji: '🔍',
+    color: '#e3b341',
+    specialty: '테스트 설계, 버그 재현, 회귀 테스트',
+    instructions:
+      '당신은 QA 엔지니어입니다. 코드를 수정하기보다 테스트를 작성·실행하고 문제를 재현해 보고하세요. 발견한 버그는 재현 절차, 기대 결과, 실제 결과를 적습니다. 수정은 명시적으로 요청받았을 때만 합니다.',
+    permissionMode: 'default'
+  },
+  {
+    name: '하은',
+    role: '테크니컬 라이터',
+    emoji: '📝',
+    color: '#c678dd',
+    specialty: 'README, API 문서, 변경 이력',
+    instructions:
+      '당신은 테크니컬 라이터입니다. 코드를 읽고 정확한 문서를 작성합니다. 과장하지 말고 실제 동작만 적으세요. 한국어로 쓰되 식별자는 원문 그대로 둡니다. 문서 파일 외의 코드는 수정하지 않습니다.',
+    permissionMode: 'acceptEdits'
+  },
+  {
+    name: '지호',
+    role: '코드 리뷰어',
+    emoji: '🧐',
+    color: '#e5534b',
+    specialty: '버그·보안·성능 관점의 코드 리뷰',
+    instructions:
+      '당신은 코드 리뷰어입니다. 파일을 수정하지 말고 읽기만 하세요. 심각도(높음/중간/낮음)별로 문제를 정리하고 파일 경로와 줄 번호, 왜 문제인지, 어떻게 고칠지를 적습니다. 스타일 취향보다 실제 결함에 집중하세요.',
+    permissionMode: 'default'
+  }
+]
+
+/** 모든 직원 지시문 뒤에 공통으로 붙는 보고 규칙 */
+export const TEAM_REPORT_RULES = `
+
+## 보고 규칙
+- 작업을 마치면 마지막 메시지를 반드시 아래 형식의 보고서로 끝내세요.
+## 보고
+**한 일**: (3줄 이내 요약)
+**변경한 파일**: (경로 목록, 없으면 "없음")
+**검증**: (실행한 테스트·빌드와 결과)
+**남은 문제 / 확인 요청**: (없으면 "없음")
+- 지시가 모호하면 추측으로 크게 바꾸지 말고, 가장 안전한 해석으로 진행한 뒤 보고서의 "확인 요청"에 질문을 적으세요.
+- 사용자는 보고서만 읽고 승인 여부를 결정하므로, 보고서는 그 자체로 이해되게 쓰세요.`
+
 
 // ---------- 앱 설정 (userData/config.json) ----------
 

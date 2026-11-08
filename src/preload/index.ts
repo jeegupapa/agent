@@ -10,6 +10,8 @@ import type {
   SendPromptArgs,
   SkillInfo,
   SkillScope,
+  TeamEvent,
+  TeamStartArgs,
   UpdateStatus
 } from '../shared/types'
 
@@ -54,6 +56,16 @@ const api = {
   createSkill: (args: CreateSkillArgs): Promise<SkillInfo> => ipcRenderer.invoke('skills:create', args),
   openSkillsFolder: (scope: SkillScope, cwd: string): Promise<string> =>
     ipcRenderer.invoke('skills:open-folder', scope, cwd),
+
+  // 팀 (직원 에이전트)
+  teamStart: (args: TeamStartArgs): Promise<void> => ipcRenderer.invoke('team:start', args),
+  teamStop: (taskId: string): Promise<void> => ipcRenderer.invoke('team:stop', taskId),
+  teamRunning: (): Promise<string[]> => ipcRenderer.invoke('team:running'),
+  onTeamEvent: (cb: (ev: TeamEvent) => void): (() => void) => {
+    const handler = (_: unknown, ev: TeamEvent): void => cb(ev)
+    ipcRenderer.on('team:event', handler)
+    return () => ipcRenderer.removeListener('team:event', handler)
+  },
 
   // 자동 업데이트
   getUpdateStatus: (): Promise<UpdateStatus | null> => ipcRenderer.invoke('update:get-status'),

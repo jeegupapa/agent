@@ -254,6 +254,36 @@ export function subscribeSessions(
   )
 }
 
+// ---------- 범용 컬렉션 (팀: employees / tasks) ----------
+
+function userCol(uid: string, name: string) {
+  if (!db) throw new Error('Firestore 가 초기화되지 않았습니다.')
+  return collection(db, 'users', uid, name)
+}
+
+export function subscribeCollection<T extends { id: string }>(
+  uid: string,
+  name: string,
+  cb: (list: T[]) => void,
+  onError?: (e: Error) => void
+): () => void {
+  return onSnapshot(
+    userCol(uid, name),
+    (snap) => cb(snap.docs.map((d) => ({ ...(d.data() as T), id: d.id }))),
+    (e) => onError?.(e)
+  )
+}
+
+export async function setDocument(uid: string, name: string, id: string, data: object): Promise<void> {
+  // undefined 제거
+  const clean = JSON.parse(JSON.stringify(data))
+  await withTimeout(setDoc(doc(userCol(uid, name), id), clean), 25_000, WRITE_TIMEOUT_HINT)
+}
+
+export async function deleteDocument(uid: string, name: string, id: string): Promise<void> {
+  await withTimeout(deleteDoc(doc(userCol(uid, name), id)), 25_000, WRITE_TIMEOUT_HINT)
+}
+
 /**
  * 콘솔에서 복사한 firebaseConfig 텍스트를 관대하게 파싱한다.
  * `const firebaseConfig = { apiKey: "..", ... };` 처럼 JS 객체 리터럴도 받는다.

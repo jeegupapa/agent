@@ -14,6 +14,7 @@ import type {
   AppConfig,
   ClaudeEvent,
   PermissionAnswer,
+  PermissionRequest,
   PlanWindow,
   SendPromptArgs,
   SubagentInfo,
@@ -85,6 +86,23 @@ export function buildEnv(config: AppConfig, apiKey: string | null): Record<strin
   return env
 }
 
+/** 이벤트와 권한 요청을 어디로 보낼지. 기본은 메인 채팅 채널, 팀 작업은 taskId 를 붙여 다른 채널로 보낸다 */
+export interface RunnerSink {
+  emit(event: ClaudeEvent): void
+  requestPermission(req: PermissionRequest): void
+}
+
+export function windowSink(win: BrowserWindow): RunnerSink {
+  return {
+    emit: (event) => {
+      if (!win.isDestroyed()) win.webContents.send('claude:event', event)
+    },
+    requestPermission: (req) => {
+      if (!win.isDestroyed()) win.webContents.send('claude:permission', req)
+    }
+  }
+}
+
 /**
  * Agent SDK의 query()를 감싸서 렌더러가 그리기 쉬운 ClaudeEvent 스트림으로 바꿔준다.
  * - 텍스트는 stream_event 로 글자 단위로 흘려보내고
@@ -100,17 +118,27 @@ export class ClaudeRunner {
   /** 이미 tool_start 를 보낸 도구 id (stream_event 와 assistant 메시지 중복 방지) */
   private emittedTools = new Set<string>()
 
+  private sink: RunnerSink
+
   constructor(
-    private win: BrowserWindow,
-    private getConfig: () => { config: AppConfig; apiKey: string | null }
-  ) {}
+    win: BrowserWindow,
+    private getConfig: () => { config: AppConfig; apiKey: string | null },
+    sink?: RunnerSink
+  ) {
+    this.sink = sink ?? windowSink(win)
+  }
 
   get isRunning(): boolean {
     return this.current !== null
   }
 
+  /** 아직 답을 기다리는 권한 요청 id 가 있는지 */
+  hasPendingPermission(requestId: string): boolean {
+    return this.pendingPermissions.has(requestId)
+  }
+
   private emit(event: ClaudeEvent): void {
-    if (!this.win.isDestroyed()) this.win.webContents.send('claude:event', event)
+    this.sink.emit(event)
   }
 
   answerPermission(answer: PermissionAnswer): void {
@@ -147,7 +175,14 @@ export class ClaudeRunner {
       mcpServers: toSdkMcpServers(config),
       // 켜져 있으면 ~/.claude 와 프로젝트 .claude 의 설정·MCP·스킬·CLAUDE.md 를 CLI 처럼 읽는다
       settingSources: config.inheritSettings ? ['user', 'project', 'local'] : [],
-      model: config.model?.trim() || undefined,
+      model: args.model?.trim() || config.model?.trim() || undefined,
+      // 직원(팀) 실행: Claude Code 기본 프롬프트 뒤에 역할 지시문을 붙인다
+      systemPrompt: args.systemPromptAppend
+        ? { type: 'preset', preset: 'claude_code', append: args.systemPromptAppend }
+        : undefined,
+      allowedTools: args.allowedTools,
+      disallowedTools: args.disallowedTools,
+      maxTurns: args.maxTurns,
       // 서브에이전트 진행 상황을 task_progress.summary 로 받는다
       agentProgressSummaries: true,
       canUseTool: async (toolName, input, { signal, suggestions }): Promise<PermissionResult> => {
@@ -158,7 +193,7 @@ export class ClaudeRunner {
             this.pendingPermissions.delete(requestId)
             resolve({ requestId, allow: false })
           })
-          this.win.webContents.send('claude:permission', { requestId, toolName, input })
+          this.sink.requestPermission({ requestId, toolName, input })
         })
         if (answer.allow) {
           return {
