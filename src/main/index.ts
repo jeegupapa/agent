@@ -12,6 +12,7 @@ import { createSkill, listSkills, skillsDir } from './skills'
 import type {
   AppConfig,
   CreateSkillArgs,
+  DispatchArgs,
   McpServerEntry,
   PermissionAnswer,
   SendPromptArgs,
@@ -129,6 +130,11 @@ app.whenReady().then(() => {
     await team?.stop(taskId)
   })
   ipcMain.handle('team:running', () => team?.runningTaskIds ?? [])
+  // 채팅 요청 → 팀장이 직원 작업으로 배분
+  ipcMain.handle('team:dispatch', async (_e, args: DispatchArgs) => {
+    if (!team) throw new Error('창이 준비되지 않았습니다.')
+    return team.dispatch(args)
+  })
 
   // ----- 폴더 / 앱 -----
   ipcMain.handle('dialog:pick-folder', async () => {

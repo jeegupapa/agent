@@ -184,6 +184,8 @@ export interface TeamTask {
   reviews: TaskReview[]
   /** 수정 요청 횟수 */
   round: number
+  /** 채팅창 요청을 팀장이 배분해 만든 작업이면 그 요청 id. 보고가 채팅으로 돌아간다 */
+  origin?: { kind: 'chat'; requestId: string }
 }
 
 /** 메인 프로세스 → 렌더러: 팀 작업 이벤트 (ClaudeEvent 에 taskId 를 붙인 것) */
@@ -197,6 +199,31 @@ export interface TeamStartArgs {
   employee: Employee
   /** 수정 요청 등 추가 지시. 있으면 이것을 프롬프트로 쓰고 세션을 이어간다 */
   followUp?: string
+}
+
+// ---------- 팀장 배분 (채팅 요청 → 직원 작업) ----------
+
+/** 팀장이 만든 작업 하나. 기존 직원(employeeId) 또는 템플릿 채용(presetRole) 중 하나를 가리킨다 */
+export interface DispatchAssignment {
+  employeeId?: string
+  /** 맞는 직원이 없을 때 EMPLOYEE_PRESETS 의 role 로 새 직원을 채용 */
+  presetRole?: string
+  title: string
+  instructions: string
+}
+export interface DispatchPlan {
+  /** 사용자에게 보여줄 배분 요약 (한두 문장) */
+  summary: string
+  assignments: DispatchAssignment[]
+  /** 직원에게 맡길 일이 아닐 때(질문·잡담) 팀장이 직접 한 답 */
+  directAnswer?: string
+}
+export interface DispatchArgs {
+  request: string
+  cwd: string
+  employees: Pick<Employee, 'id' | 'name' | 'role' | 'specialty'>[]
+  /** 팀장이 쓸 모델 (비우면 기본 모델) */
+  model?: string
 }
 
 /** 바로 쓸 수 있는 직원 템플릿 */

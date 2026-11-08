@@ -550,3 +550,38 @@ body.resizing * { cursor: col-resize !important; }
 .emp-chip { padding: 5px 10px; border-radius: 16px; font-size: 12px; }
 .emp-chip.active { background: var(--bg-3); color: var(--text); }
 .team-delete-emp { position: fixed; left: 50%; bottom: 7vh; transform: translateX(calc(-50% - 300px)); z-index: 11; }
+
+/* ----- 채팅 ↔ 팀 연동: 팀에게 맡기기 토글, 배분 카드, 보고 카드 ----- */
+.composer-bar { display: flex; align-items: center; gap: 10px; padding: 0 2px 6px; flex-wrap: wrap; }
+.team-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; user-select: none; color: var(--muted); }
+.team-toggle.on { color: var(--text); font-weight: 600; }
+.team-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.team-toggle .knob { width: 28px; height: 16px; border-radius: 8px; background: var(--bg-3); border: 1px solid var(--border); position: relative; transition: background 0.15s; }
+.team-toggle .knob::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: left 0.15s, background 0.15s; }
+.team-toggle.on .knob { background: var(--accent); border-color: var(--accent); }
+.team-toggle.on .knob::after { left: 14px; background: #fff; }
+.msg.team { justify-content: flex-start; }
+.team-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; max-width: 92%; min-width: 320px; display: flex; flex-direction: column; gap: 8px; }
+.team-card.report { border-left: 3px solid var(--accent); }
+.team-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.team-card-head .tc-title { flex-basis: 100%; }
+.tc-avatar { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; background: var(--bg-3); flex-shrink: 0; }
+.tc-avatar.lead { background: var(--accent); }
+.tc-summary { font-size: 13px; line-height: 1.5; }
+.dispatch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dispatch-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); cursor: pointer; font-size: 12.5px; flex-wrap: wrap; }
+.dispatch-list li:hover { border-color: var(--accent); }
+.dispatch-who { display: inline-flex; flex-direction: column; line-height: 1.15; min-width: 70px; }
+.dispatch-title { flex: 1; min-width: 120px; }
+.dispatch-progress { flex-basis: 100%; padding-left: 32px; }
+.tc-report { font-size: 13px; line-height: 1.55; }
+.tc-report > :first-child { margin-top: 0; }
+.tc-report > :last-child { margin-bottom: 0; }
+.tc-report h2 { font-size: 14px; margin: 8px 0 4px; }
+.tc-report ul, .tc-report ol { margin: 4px 0 6px; padding-left: 20px; }
+.tc-report p { margin: 0 0 6px; }
+.tc-report code { font-family: var(--mono); font-size: 12px; background: var(--bg-3); padding: 1px 5px; border-radius: 4px; }
+.tc-actions { padding-top: 2px; }
+.tc-actions input.text { flex: 1; min-width: 200px; }
+button.ghost-btn { background: transparent; border-color: transparent; color: var(--accent-2); }
+button.ghost-btn:hover { border-color: var(--border); }

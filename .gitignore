@@ -8,3 +8,7 @@ dist
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+
+# 테스트 하네스 산출물
+.team-bundle.cjs
+.harness-*/

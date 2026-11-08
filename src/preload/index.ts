@@ -4,6 +4,8 @@ import type {
   AppConfigView,
   ClaudeEvent,
   CreateSkillArgs,
+  DispatchArgs,
+  DispatchPlan,
   McpServerEntry,
   PermissionAnswer,
   PermissionRequest,
@@ -61,6 +63,7 @@ const api = {
   teamStart: (args: TeamStartArgs): Promise<void> => ipcRenderer.invoke('team:start', args),
   teamStop: (taskId: string): Promise<void> => ipcRenderer.invoke('team:stop', taskId),
   teamRunning: (): Promise<string[]> => ipcRenderer.invoke('team:running'),
+  teamDispatch: (args: DispatchArgs): Promise<DispatchPlan> => ipcRenderer.invoke('team:dispatch', args),
   onTeamEvent: (cb: (ev: TeamEvent) => void): (() => void) => {
     const handler = (_: unknown, ev: TeamEvent): void => cb(ev)
     ipcRenderer.on('team:event', handler)
