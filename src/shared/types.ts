@@ -143,6 +143,8 @@ export interface FirebaseSettings {
   saveSessions: boolean
   /** 개발용: "127.0.0.1:9099,127.0.0.1:8080" (Auth, Firestore 에뮬레이터) */
   emulator?: string
+  /** Firestore 데이터베이스 ID. 비우면 "(default)". 콘솔에서 이름을 붙여 만들었으면 그 이름 */
+  databaseId?: string
 }
 
 /** Firestore users/{uid}/sessions/{id} 문서 */

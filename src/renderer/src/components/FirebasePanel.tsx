@@ -239,6 +239,16 @@ export function FirebaseTab(p: {
         제한합니다.
       </div>
 
+      <label className="field">
+        <span>Firestore 데이터베이스 ID (비우면 (default). 콘솔 Firestore 화면 상단에 표시된 이름)</span>
+        <input
+          className="text mono"
+          placeholder="(default)"
+          value={fb.databaseId ?? ''}
+          onChange={(e) => set({ databaseId: e.target.value || undefined })}
+        />
+      </label>
+
       <details>
         <summary className="muted small">개발용: 에뮬레이터</summary>
         <label className="field">

@@ -57,7 +57,7 @@ let db: Firestore | null = null
 let currentKey = ''
 
 function settingsKey(s: FirebaseSettings): string {
-  return JSON.stringify([s.config?.projectId, s.config?.appId, s.config?.apiKey, s.emulator ?? ''])
+  return JSON.stringify([s.config?.projectId, s.config?.appId, s.config?.apiKey, s.emulator ?? '', s.databaseId ?? ''])
 }
 
 /**
@@ -75,7 +75,10 @@ export async function ensureFirebase(s: FirebaseSettings): Promise<boolean> {
 
   app = initializeApp(s.config as FirebaseWebConfig, 'studio')
   auth = getAuth(app)
-  db = initializeFirestore(app, { localCache: persistentLocalCache() })
+  const databaseId = s.databaseId?.trim()
+  db = databaseId
+    ? initializeFirestore(app, { localCache: persistentLocalCache() }, databaseId)
+    : initializeFirestore(app, { localCache: persistentLocalCache() })
 
   if (s.emulator?.trim()) {
     const [authHost, fsHost] = s.emulator.split(',').map((x) => x.trim())

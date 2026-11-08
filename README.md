@@ -43,7 +43,8 @@ Firebase(Authentication + Firestore)를 데이터베이스로 써서 세션 기�
 1. 프로젝트 만들기 → 웹 앱(</>) 추가 → `firebaseConfig` 복사
 2. Authentication → 로그인 방법 → **이메일/비밀번호** 사용 설정
 3. Firestore Database → 데이터베이스 만들기 (프로덕션 모드, 리전은 `asia-northeast3` 권장).
-   Realtime Database 와는 별개 제품이라 Firestore 를 따로 만들어야 합니다 (없으면 저장이 `NOT_FOUND` 로 계속 재시도만 함)
+   Realtime Database 와는 별개 제품이라 Firestore 를 따로 만들어야 합니다 (없으면 저장이 `NOT_FOUND` 로 계속 재시도만 함).
+   데이터베이스 ID 를 `(default)` 가 아닌 이름으로 만들었다면 앱의 Firebase 탭 "Firestore 데이터베이스 ID" 에 그 이름을 적습니다
 4. Firestore → 규칙 탭에 이 저장소의 [`firestore.rules`](firestore.rules) 내용을 붙여넣고 게시
    (또는 `firebase deploy --only firestore:rules`)
 
