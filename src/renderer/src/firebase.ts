@@ -185,8 +185,28 @@ function sanitize(s: SavedSession): SavedSession {
   return out
 }
 
+/** Firestore 는 서버 오류(예: 데이터베이스 미생성)를 계속 재시도하므로 일정 시간 안에 끝나지 않으면 실패로 본다 */
+function withTimeout<T>(p: Promise<T>, ms: number, hint: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(hint)), ms)
+    p.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(t)
+        reject(e)
+      }
+    )
+  })
+}
+
+const WRITE_TIMEOUT_HINT =
+  'Firestore 에 쓰지 못했습니다. Firebase 콘솔 → Firestore Database 가 만들어져 있는지(Realtime Database 가 아님), 규칙이 게시됐는지, 네트워크를 확인하세요.'
+
 export async function saveSession(uid: string, s: SavedSession): Promise<void> {
-  await setDoc(doc(sessionsCol(uid), s.id), sanitize(s), { merge: true })
+  await withTimeout(setDoc(doc(sessionsCol(uid), s.id), sanitize(s), { merge: true }), 25_000, WRITE_TIMEOUT_HINT)
 }
 
 export async function loadSession(uid: string, id: string): Promise<SavedSession | null> {
@@ -195,7 +215,7 @@ export async function loadSession(uid: string, id: string): Promise<SavedSession
 }
 
 export async function deleteSession(uid: string, id: string): Promise<void> {
-  await deleteDoc(doc(sessionsCol(uid), id))
+  await withTimeout(deleteDoc(doc(sessionsCol(uid), id)), 25_000, WRITE_TIMEOUT_HINT)
 }
 
 /** 최근 세션 목록을 실시간으로 구독한다 (메타데이터만 사용) */
@@ -238,7 +258,8 @@ export function parseFirebaseConfig(text: string): FirebaseWebConfig {
   if (start < 0 || end < 0) throw new Error('{ ... } 형태의 설정을 붙여넣으세요.')
   let body = text.slice(start, end + 1)
   body = body
-    .replace(/\/\/.*$/gm, '')
+    // 주석 제거. "https://…" 안의 // 는 앞이 ':' 라서 건드리지 않는다
+    .replace(/(^|\s)\/\/.*$/gm, '$1')
     .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
     .replace(/'/g, '"')
     .replace(/,\s*}/g, '}')

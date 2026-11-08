@@ -216,9 +216,23 @@ export const DEFAULT_UPDATE_CONFIG: UpdateConfig = {
   url: ''
 }
 
+/**
+ * 기본 Firebase 프로젝트 (agent-da912). 웹 앱용 공개 설정이라 비밀이 아니며,
+ * 보안은 Firestore 규칙(firestore.rules)과 로그인으로 지킨다. 설정 창에서 다른 프로젝트로 바꿀 수 있다.
+ */
+export const DEFAULT_FIREBASE_CONFIG: FirebaseWebConfig = {
+  apiKey: 'AIzaSyDZH1Vcl0uchRyruKkc_TUha9OodFGTrfc',
+  authDomain: 'agent-da912.firebaseapp.com',
+  projectId: 'agent-da912',
+  storageBucket: 'agent-da912.firebasestorage.app',
+  messagingSenderId: '940401045515',
+  appId: '1:940401045515:web:a27b10dc41c671323a970e'
+}
+
 export const DEFAULT_FIREBASE_SETTINGS: FirebaseSettings = {
-  enabled: false,
-  saveSessions: true
+  enabled: true,
+  saveSessions: true,
+  config: DEFAULT_FIREBASE_CONFIG
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

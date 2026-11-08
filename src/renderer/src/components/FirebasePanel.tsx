@@ -231,10 +231,12 @@ export function FirebaseTab(p: {
         </div>
       </label>
 
-      <h4>Firestore 보안 규칙</h4>
+      <h4>Firestore 데이터베이스와 보안 규칙</h4>
       <div className="muted small">
-        저장소의 <code>firestore.rules</code> 를 콘솔 → Firestore Database → 규칙에 붙여넣으세요. 로그인한
-        사용자가 자기 문서만 읽고 쓸 수 있게 제한합니다.
+        콘솔 → 빌드 → <b>Firestore Database</b> → 데이터베이스 만들기(프로덕션 모드, asia-northeast3 권장).
+        Realtime Database 와는 다른 제품이라 Firestore 를 따로 만들어야 합니다. 그 다음 규칙 탭에 저장소의{' '}
+        <code>firestore.rules</code> 를 붙여넣고 게시하세요. 로그인한 사용자가 자기 문서만 읽고 쓸 수 있게
+        제한합니다.
       </div>
 
       <details>

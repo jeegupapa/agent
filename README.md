@@ -42,13 +42,15 @@ Firebase(Authentication + Firestore)를 데이터베이스로 써서 세션 기�
 ### 준비 (Firebase 콘솔, 무료 Spark 플랜으로 충분)
 1. 프로젝트 만들기 → 웹 앱(</>) 추가 → `firebaseConfig` 복사
 2. Authentication → 로그인 방법 → **이메일/비밀번호** 사용 설정
-3. Firestore Database → 데이터베이스 만들기 (프로덕션 모드, 리전은 `asia-northeast3` 권장)
+3. Firestore Database → 데이터베이스 만들기 (프로덕션 모드, 리전은 `asia-northeast3` 권장).
+   Realtime Database 와는 별개 제품이라 Firestore 를 따로 만들어야 합니다 (없으면 저장이 `NOT_FOUND` 로 계속 재시도만 함)
 4. Firestore → 규칙 탭에 이 저장소의 [`firestore.rules`](firestore.rules) 내용을 붙여넣고 게시
    (또는 `firebase deploy --only firestore:rules`)
 
 ### 앱에서
-- 설정 → **Firebase** 탭에 `firebaseConfig` 를 그대로 붙여넣습니다 (`const firebaseConfig = {…}` 형태도 됨). 공개
-  식별자라 비밀이 아니며 `config.json` 에 저장됩니다.
+- 기본 프로젝트(`agent-da912`)의 `firebaseConfig` 가 앱에 내장되어 있어 바로 로그인할 수 있습니다. 다른 프로젝트를
+  쓰려면 설정 → **Firebase** 탭에 `firebaseConfig` 를 그대로 붙여넣습니다 (`const firebaseConfig = {…}` 형태도 됨).
+  공개 식별자라 비밀이 아니며 `config.json` 에 저장됩니다.
 - 이메일·비밀번호로 "계정 만들기" 또는 "로그인" 후 저장합니다. 로그인 상태는 앱을 껐다 켜도 유지됩니다.
 - 이후 대화가 한 턴 끝날 때마다 `users/{uid}/sessions/{세션ID}` 문서에 제목(첫 메시지), 작업 폴더, 모델,
   메시지, 도구 호출(결과는 6,000자까지), 사용량, 저장한 PC 이름을 저장합니다. 문서가 900KB 를 넘으면 도구 결과를
