@@ -100,8 +100,11 @@ pre.error { border-color: var(--err); color: #f3b3af; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.kv { display: flex; justify-content: space-between; font-size: 13px; }
+.kv { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 .kv span { color: var(--muted); }
+.kv b { text-align: right; }
+.kv b.warn { color: var(--warn); }
+.kv .small-btn { margin-top: 0; }
 .modes { display: flex; flex-direction: column; gap: 4px; }
 .mode {
   display: flex;

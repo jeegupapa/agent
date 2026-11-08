@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AppConfig,
   AppConfigView,
+  AuthStatus,
   ClaudeEvent,
   Employee,
   TeamTask,
@@ -88,6 +89,13 @@ export default function App() {
   const [selectedTool, setSelectedTool] = useState<string | null>(null)
   const [insertRequest, setInsertRequest] = useState<{ text: string; nonce: number } | null>(null)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  // claude.ai 로그인 여부·플랜 (요청을 보내기 전에도 표시)
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null)
+  const refreshAuth = useCallback(async (): Promise<AuthStatus> => {
+    const st = await window.api.authStatus()
+    setAuthStatus(st)
+    return st
+  }, [])
   const [layout, setLayout] = useState<PanelLayout>(loadLayout)
   const [hostname, setHostname] = useState('')
   const [fbUser, setFbUser] = useState<fb.FbUser | null>(null)
@@ -108,8 +116,9 @@ export default function App() {
     window.api.getConfig().then(setConfig)
     window.api.getUpdateStatus().then(setUpdateStatus)
     window.api.hostname().then(setHostname)
+    void refreshAuth()
     return window.api.onUpdateStatus(setUpdateStatus)
-  }, [])
+  }, [refreshAuth])
 
   // ----- 패널 레이아웃 (너비·표시) -----
   useEffect(() => saveLayout(layout), [layout])
@@ -685,6 +694,7 @@ export default function App() {
         plan={plan}
         running={running}
         updateStatus={updateStatus}
+        authStatus={authStatus}
         mode={mode}
         teamSummary={teamSummary}
         onModeChange={setMode}
@@ -827,6 +837,8 @@ export default function App() {
           cwd={cwd}
           initialTab={settingsTab}
           updateStatus={updateStatus}
+          authStatus={authStatus}
+          onRefreshAuth={refreshAuth}
           running={running}
           fbUser={fbUser}
           onSave={saveConfig}

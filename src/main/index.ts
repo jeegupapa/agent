@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
-import { spawn } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { homedir, hostname } from 'os'
 import { dirname, join } from 'path'
@@ -11,6 +11,7 @@ import { TeamRunner } from './team'
 import { createSkill, listSkills, skillsDir } from './skills'
 import type {
   AppConfig,
+  AuthStatus,
   CreateSkillArgs,
   DispatchArgs,
   McpServerEntry,
@@ -35,6 +36,54 @@ function bundledClaudeExe(): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 번들된 CLI 의 `claude auth status` 로 로그인 여부·이메일·플랜을 읽는다.
+ * 요청을 보내지 않아도 "claude.ai 로그인이 되어 있는지" 를 보여 주기 위한 것.
+ * 상속된 API 키 환경 변수는 빼고 실행해 앱의 OAuth 모드와 같은 조건으로 확인한다.
+ */
+function authStatus(): Promise<AuthStatus> {
+  const exe = bundledClaudeExe() ?? 'claude'
+  const env: Record<string, string> = {}
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') env[k] = v
+  delete env.ANTHROPIC_API_KEY
+  delete env.ANTHROPIC_AUTH_TOKEN
+  const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
+  return new Promise((resolve) => {
+    execFile(
+      exe,
+      ['auth', 'status'],
+      { timeout: 20_000, windowsHide: true, env, shell: exe === 'claude', maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => {
+        // 로그인이 안 돼 있어도 JSON 은 나오고 종료 코드만 0 이 아닐 수 있다 → 먼저 JSON 을 찾는다
+        const text = String(stdout || '')
+        const start = text.indexOf('{')
+        if (start >= 0) {
+          try {
+            const j = JSON.parse(text.slice(start)) as Record<string, unknown>
+            resolve({
+              loggedIn: j.loggedIn === true,
+              authMethod: str(j.authMethod),
+              email: str(j.email),
+              subscriptionType: str(j.subscriptionType),
+              loginExpiresAt: str(j.loginExpiresAt),
+              orgName: str(j.orgName),
+              checkedAt: Date.now()
+            })
+            return
+          } catch {
+            /* 아래 오류 처리로 */
+          }
+        }
+        resolve({
+          loggedIn: false,
+          error: (String(stderr || '').trim() || (err ? err.message : '') || '응답을 해석하지 못했습니다.').slice(0, 300),
+          checkedAt: Date.now()
+        })
+      }
+    )
+  })
 }
 
 /** ~/.claude.json 의 전역 MCP 서버와 해당 프로젝트 MCP 서버를 앱 설정 형태로 읽는다 */
@@ -158,6 +207,7 @@ app.whenReady().then(() => {
   })
 
   // ----- 인증 -----
+  ipcMain.handle('auth:status', () => authStatus())
   ipcMain.handle('auth:login-terminal', () => {
     // 별도 콘솔 창을 띄워 `claude login` 을 실행한다 (OAuth 는 브라우저로 이어짐)
     const exe = bundledClaudeExe() ?? 'claude'

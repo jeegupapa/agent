@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type {
   AppConfigView,
+  AuthStatus,
   PermissionMode,
   PlanWindow,
   SavedSessionMeta,
@@ -23,6 +24,8 @@ interface Props {
   plan: PlanUsage | null
   running: boolean
   updateStatus: UpdateStatus | null
+  /** `claude auth status` 결과. null 이면 아직 확인 중 */
+  authStatus: AuthStatus | null
   mode: 'chat' | 'team'
   teamSummary: { running: number; attention: number }
   onModeChange: (m: 'chat' | 'team') => void
@@ -101,7 +104,13 @@ function barClass(w: PlanWindow): string {
   return 'plan-fill'
 }
 
-export function PlanUsageView({ plan }: { plan: PlanUsage | null }) {
+/** 구독 종류 코드 → 표시 이름 */
+export function planName(sub: string): string {
+  const map: Record<string, string> = { max: 'Max 플랜', pro: 'Pro 플랜', team: 'Team 플랜', enterprise: 'Enterprise 플랜', free: '무료' }
+  return map[sub.toLowerCase()] ?? `${sub} 플랜`
+}
+
+export function PlanUsageView({ plan, auth, apiKeyMode }: { plan: PlanUsage | null; auth: AuthStatus | null; apiKeyMode: boolean }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000)
@@ -109,7 +118,22 @@ export function PlanUsageView({ plan }: { plan: PlanUsage | null }) {
   }, [])
 
   if (!plan || plan.windows.length === 0) {
-    return <div className="muted small">첫 요청 후 플랜 한도가 표시됩니다. (API 키 모드에서는 표시되지 않음)</div>
+    if (apiKeyMode) return <div className="muted small">API 키 모드에서는 플랜 한도가 표시되지 않습니다 (종량제).</div>
+    if (!auth) return <div className="muted small">로그인 상태 확인 중…</div>
+    if (!auth.loggedIn) {
+      return (
+        <div className="small warn">
+          claude.ai 에 로그인되어 있지 않습니다. 설정 → API · 인증 → "터미널에서 로그인 열기"로 로그인하세요.
+          {auth.error ? <div className="muted">({auth.error})</div> : null}
+        </div>
+      )
+    }
+    return (
+      <div className="muted small">
+        <b>{auth.subscriptionType ? planName(auth.subscriptionType) : 'claude.ai'}</b> 로그인됨{auth.email ? ` (${auth.email})` : ''}.
+        사용량 한도 막대는 첫 요청 뒤에 표시됩니다.
+      </div>
+    )
   }
 
   const windows = [...plan.windows].sort(
@@ -148,14 +172,29 @@ export function PlanUsageView({ plan }: { plan: PlanUsage | null }) {
 function ConnectionView(p: Props) {
   const cfg = p.config
   const s = p.session
+  const a = p.authStatus
   const authLabel = !cfg
     ? '-'
     : cfg.auth.mode === 'apiKey'
       ? cfg.hasApiKey
         ? `API 키 (…${cfg.apiKeyHint})`
         : 'API 키 (미설정!)'
-      : 'claude.ai 로그인'
-  const authLive = s ? (s.apiKeySource === 'none' ? 'OAuth 확인됨' : `키: ${s.apiKeySource}`) : ''
+      : s
+        ? s.apiKeySource === 'none'
+          ? `claude.ai 로그인${a?.subscriptionType ? ` · ${planName(a.subscriptionType)}` : ''}`
+          : `API 키 (${s.apiKeySource})`
+        : !a
+          ? 'claude.ai 로그인 확인 중…'
+          : a.loggedIn
+            ? `claude.ai 로그인됨${a.subscriptionType ? ` · ${planName(a.subscriptionType)}` : ''}`
+            : 'claude.ai 로그인 필요!'
+  const authLive = s
+    ? s.apiKeySource === 'none'
+      ? `OAuth 확인됨${a?.email ? ` · ${a.email}` : ''}`
+      : `키: ${s.apiKeySource}`
+    : a?.loggedIn
+      ? `${a.email ?? ''}${a.orgName ? ` · ${a.orgName}` : ''}`
+      : a?.error ?? '설정 → API · 인증 → "터미널에서 로그인 열기"'
   const appMcp = cfg?.mcpServers.filter((m) => m.enabled).length ?? 0
   const mcpList = s?.mcpServers ?? []
   const skillCount = s?.skills.length ?? 0
@@ -309,7 +348,7 @@ export function Sidebar(p: Props) {
 
       <section>
         <h2>플랜 사용량</h2>
-        <PlanUsageView plan={p.plan} />
+        <PlanUsageView plan={p.plan} auth={p.authStatus} apiKeyMode={p.config?.auth.mode === 'apiKey'} />
       </section>
 
       <section>

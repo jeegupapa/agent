@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AppConfig,
   AppConfigView,
+  AuthStatus,
   ClaudeEvent,
   CreateSkillArgs,
   DispatchArgs,
@@ -48,6 +49,8 @@ const api = {
 
   // 인증
   loginInTerminal: (): Promise<string> => ipcRenderer.invoke('auth:login-terminal'),
+  /** `claude auth status` — 요청 없이 로그인 여부·플랜 확인 */
+  authStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:status'),
 
   // MCP
   importClaudeMcp: (cwd: string): Promise<McpServerEntry[]> =>

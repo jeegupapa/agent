@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { planName } from './Sidebar'
 import type {
   AppConfig,
   AppConfigView,
+  AuthStatus,
   McpServerEntry,
   McpTransport,
   SessionInfo,
@@ -21,6 +23,9 @@ interface Props {
   cwd: string
   initialTab?: Tab
   updateStatus: UpdateStatus | null
+  authStatus: AuthStatus | null
+  /** `claude auth status` 를 다시 읽는다 */
+  onRefreshAuth: () => Promise<AuthStatus>
   running: boolean
   fbUser: FbUser | null
   onSave: (config: AppConfig) => Promise<void>
@@ -114,6 +119,8 @@ export function SettingsDialog(p: Props) {
               draft={draft}
               view={p.config}
               session={p.session}
+              authStatus={p.authStatus}
+              onRefreshAuth={p.onRefreshAuth}
               onChange={setDraft}
               onSaveApiKey={p.onSaveApiKey}
               setMsg={setMsg}
@@ -158,23 +165,70 @@ function AuthTab(p: {
   draft: AppConfig
   view: AppConfigView
   session: SessionInfo | null
+  authStatus: AuthStatus | null
+  onRefreshAuth: () => Promise<AuthStatus>
   onChange: (c: AppConfig) => void
   onSaveApiKey: (key: string | null) => Promise<void>
   setMsg: (s: string) => void
 }) {
   const [key, setKey] = useState('')
+  const [checking, setChecking] = useState(false)
+  // "터미널에서 로그인 열기" 뒤 로그인이 끝나는지 몇 초마다 확인한다
+  const pollRef = useRef<number | null>(null)
+  useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current) }, [])
   const { draft } = p
+  const a = p.authStatus
   const authNow = p.session
     ? p.session.apiKeySource === 'none'
       ? 'claude.ai 로그인(OAuth)'
       : `API 키 (${p.session.apiKeySource})`
-    : '아직 요청 없음'
+    : '아직 요청 없음 (첫 요청 때 확정)'
+  const loginLine = !a
+    ? '확인 중…'
+    : a.loggedIn
+      ? `${a.authMethod === 'claude.ai' ? 'claude.ai' : a.authMethod ?? ''} 로그인됨 · ${a.email ?? ''}${a.subscriptionType ? ` · ${planName(a.subscriptionType)}` : ''}${
+          a.loginExpiresAt ? ` · ${new Date(a.loginExpiresAt).toLocaleDateString('ko-KR')} 까지` : ''
+        }`
+      : `로그인 안 됨${a.error ? ` (${a.error})` : ''}`
+
+  const refresh = async (): Promise<void> => {
+    setChecking(true)
+    try {
+      const st = await p.onRefreshAuth()
+      p.setMsg(st.loggedIn ? `로그인 확인: ${st.email ?? ''} ${st.subscriptionType ? planName(st.subscriptionType) : ''}` : '아직 로그인되어 있지 않습니다.')
+    } finally {
+      setChecking(false)
+    }
+  }
+  const startPolling = (): void => {
+    if (pollRef.current) window.clearInterval(pollRef.current)
+    const started = Date.now()
+    pollRef.current = window.setInterval(async () => {
+      const st = await p.onRefreshAuth()
+      if (st.loggedIn || Date.now() - started > 3 * 60_000) {
+        if (pollRef.current) window.clearInterval(pollRef.current)
+        pollRef.current = null
+        if (st.loggedIn) p.setMsg(`로그인 완료: ${st.email ?? ''} ${st.subscriptionType ? planName(st.subscriptionType) : ''}. 다음 요청부터 이 계정의 플랜으로 실행됩니다.`)
+      }
+    }, 3000)
+  }
 
   return (
     <div className="form">
       <div className="kv">
+        <span>claude.ai 로그인 상태</span>
+        <b className={a && !a.loggedIn ? 'warn' : ''}>{loginLine}</b>
+        <button className="small-btn" disabled={checking} onClick={refresh}>
+          {checking ? '확인 중…' : '다시 확인'}
+        </button>
+      </div>
+      <div className="kv">
         <span>현재 세션 인증</span>
         <b>{authNow}</b>
+      </div>
+      <div className="muted small">
+        플랜 사용량 막대(사이드바)는 Claude 가 요청마다 보내 주는 한도 정보로 그려지므로 첫 요청 뒤에 나타납니다. 로그인만 되어
+        있으면 요청 없이도 위 줄에 플랜 종류가 보입니다.
       </div>
 
       <h4>인증 방식</h4>
@@ -191,7 +245,8 @@ function AuthTab(p: {
             className="small-btn"
             onClick={async () => {
               const exe = await window.api.loginInTerminal()
-              p.setMsg(`새 콘솔 창에서 로그인을 진행하세요 (${exe}). 끝나면 다음 요청부터 적용됩니다.`)
+              p.setMsg(`새 콘솔 창에서 로그인을 진행하세요 (${exe}). 끝나면 여기서 자동으로 확인합니다.`)
+              startPolling()
             }}
           >
             터미널에서 로그인 열기

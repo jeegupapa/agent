@@ -56,6 +56,21 @@ export interface PlanWindow {
   resetsAt?: number
 }
 
+/** `claude auth status` 결과. 요청을 보내지 않아도 로그인 여부와 플랜 종류를 알 수 있다 */
+export interface AuthStatus {
+  loggedIn: boolean
+  /** claude.ai / console 등 */
+  authMethod?: string
+  email?: string
+  /** max / pro / team / enterprise … */
+  subscriptionType?: string
+  loginExpiresAt?: string
+  orgName?: string
+  /** 확인 실패 시 메시지 */
+  error?: string
+  checkedAt: number
+}
+
 /** 세션 시작(init) 시 SDK가 알려주는 연결 상태 */
 export interface SessionInfo {
   sessionId: string
