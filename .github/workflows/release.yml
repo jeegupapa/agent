@@ -1,0 +1,58 @@
+# 태그(v*)를 푸시하면 Windows 설치 파일을 빌드해 GitHub Releases 에 올린다.
+# 설치된 앱(electron-updater, provider: github)이 이 Release 를 보고 자동 업데이트한다.
+#
+# 배포 순서:
+#   1. package.json 의 version 을 올린다 (예: 0.3.0)
+#   2. git commit && git tag v0.3.0 && git push && git push --tags
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAG=${GITHUB_REF#refs/tags/v}
+          if [ "$PKG" != "$TAG" ]; then
+            echo "package.json version ($PKG) != tag ($TAG)"; exit 1
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build and publish installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-vite build && npx electron-builder --win --publish always
+
+      - name: Upload build artifacts (for workflow_dispatch runs)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
