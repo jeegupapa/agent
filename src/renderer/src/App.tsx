@@ -20,6 +20,17 @@ import { PermissionDialog } from './components/PermissionDialog'
 import { SettingsDialog } from './components/SettingsDialog'
 import type { SyncState } from './components/FirebasePanel'
 import * as fb from './firebase'
+import { Resizer } from './components/Resizer'
+import {
+  DEFAULT_LAYOUT,
+  LIMITS,
+  clamp,
+  loadLayout,
+  maxRightWidth,
+  maxSidebarWidth,
+  saveLayout,
+  type PanelLayout
+} from './layout'
 
 export interface PlanUsage {
   windows: PlanWindow[]
@@ -58,6 +69,7 @@ export default function App() {
   const [selectedTool, setSelectedTool] = useState<string | null>(null)
   const [insertRequest, setInsertRequest] = useState<{ text: string; nonce: number } | null>(null)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [layout, setLayout] = useState<PanelLayout>(loadLayout)
   const [hostname, setHostname] = useState('')
   const [fbUser, setFbUser] = useState<fb.FbUser | null>(null)
   const [savedSessions, setSavedSessions] = useState<SavedSessionMeta[]>([])
@@ -79,6 +91,37 @@ export default function App() {
     window.api.hostname().then(setHostname)
     return window.api.onUpdateStatus(setUpdateStatus)
   }, [])
+
+  // ----- 패널 레이아웃 (너비·표시) -----
+  useEffect(() => saveLayout(layout), [layout])
+  const toggleSidebar = useCallback(() => setLayout((l) => ({ ...l, sidebarOpen: !l.sidebarOpen })), [])
+  const toggleRight = useCallback(() => setLayout((l) => ({ ...l, rightOpen: !l.rightOpen })), [])
+  const openRight = useCallback(() => setLayout((l) => (l.rightOpen ? l : { ...l, rightOpen: true })), [])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!e.ctrlKey || e.altKey || e.metaKey) return
+      if (e.key.toLowerCase() === 'b' && !e.shiftKey) {
+        e.preventDefault()
+        toggleSidebar()
+      } else if (e.key.toLowerCase() === 'j' && !e.shiftKey) {
+        e.preventDefault()
+        toggleRight()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [toggleSidebar, toggleRight])
+  const resizeSidebar = (dx: number): void =>
+    setLayout((l) => ({
+      ...l,
+      sidebarWidth: clamp(l.sidebarWidth + dx, LIMITS.sidebar.min, maxSidebarWidth(l, window.innerWidth))
+    }))
+  const resizeRight = (dx: number): void =>
+    setLayout((l) => ({
+      ...l,
+      rightWidth: clamp(l.rightWidth - dx, LIMITS.right.min, maxRightWidth(l, window.innerWidth))
+    }))
+  const gridColumns = `${layout.sidebarOpen ? layout.sidebarWidth : 0}px minmax(0, 1fr) ${layout.rightOpen ? layout.rightWidth : 0}px`
 
   // ----- Firebase 연결 / 로그인 상태 -----
   const fbSettings = config?.firebase
@@ -177,6 +220,7 @@ export default function App() {
   }
 
   const handleEvent = useCallback((ev: ClaudeEvent) => {
+    // eslint-disable-next-line @typescript-eslint/no-use-before-define
     switch (ev.kind) {
       case 'session':
         setSessionId(ev.info.sessionId)
@@ -216,6 +260,7 @@ export default function App() {
         if (isEditTool(ev.call.name)) {
           setSelectedTool(ev.call.id)
           setRightTab('diff')
+          openRight()
         }
         break
       case 'tool_result':
@@ -376,6 +421,7 @@ export default function App() {
     setSelectedTool(id)
     const call = toolCalls.find((c) => c.id === id)
     setRightTab(call && isEditTool(call.name) ? 'diff' : 'tools')
+    openRight()
   }
 
   const saveConfig = async (next: AppConfig): Promise<void> => {
@@ -386,8 +432,9 @@ export default function App() {
   }
 
   return (
-    <div className="app">
-      <Sidebar
+    <div className="app" style={{ gridTemplateColumns: gridColumns }}>
+      {layout.sidebarOpen ? (
+        <Sidebar
         cwd={cwd}
         session={session}
         config={config}
@@ -412,6 +459,31 @@ export default function App() {
         onPermissionModeChange={setPermissionMode}
         onOpenSettings={(tab) => setSettingsTab(tab)}
       />
+      ) : (
+        <div />
+      )}
+      <div className="chat-col">
+        {layout.sidebarOpen && (
+          <Resizer
+            side="left"
+            onResize={resizeSidebar}
+            onReset={() => setLayout((l) => ({ ...l, sidebarWidth: DEFAULT_LAYOUT.sidebarWidth }))}
+          />
+        )}
+        <button
+          className={`panel-toggle left ${layout.sidebarOpen ? '' : 'closed'}`}
+          title={layout.sidebarOpen ? '사이드바 숨기기 (Ctrl+B)' : '사이드바 보이기 (Ctrl+B)'}
+          onClick={toggleSidebar}
+        >
+          {layout.sidebarOpen ? '◀' : '☰'}
+        </button>
+        <button
+          className={`panel-toggle right ${layout.rightOpen ? '' : 'closed'}`}
+          title={layout.rightOpen ? '도구 패널 숨기기 (Ctrl+J)' : '도구 패널 보이기 (Ctrl+J)'}
+          onClick={toggleRight}
+        >
+          {layout.rightOpen ? '▶' : `🔧${toolCalls.length ? ` ${toolCalls.length}` : ''}`}
+        </button>
       <Chat
         items={items}
         toolCalls={toolCalls}
@@ -423,6 +495,15 @@ export default function App() {
         onInterrupt={() => window.api.interrupt()}
         onSelectTool={selectTool}
       />
+        {layout.rightOpen && (
+          <Resizer
+            side="right"
+            onResize={resizeRight}
+            onReset={() => setLayout((l) => ({ ...l, rightWidth: DEFAULT_LAYOUT.rightWidth }))}
+          />
+        )}
+      </div>
+      {layout.rightOpen ? (
       <aside className="right">
         <div className="tabs">
           <button className={rightTab === 'tools' ? 'active' : ''} onClick={() => setRightTab('tools')}>
@@ -438,6 +519,9 @@ export default function App() {
           <DiffPanel calls={toolCalls} selected={selectedTool} onSelect={setSelectedTool} />
         )}
       </aside>
+      ) : (
+        <div />
+      )}
       {permission && (
         <PermissionDialog
           request={permission}

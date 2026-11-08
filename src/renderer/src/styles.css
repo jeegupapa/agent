@@ -59,7 +59,7 @@ pre.error { border-color: var(--err); color: #f3b3af; }
 
 .app {
   display: grid;
-  grid-template-columns: 260px 1fr 420px;
+  grid-template-columns: 260px minmax(0, 1fr) 420px; /* 실제 값은 App 이 인라인 스타일로 지정 */
   grid-template-rows: 100%;
   height: 100vh;
   overflow: hidden;
@@ -131,7 +131,8 @@ pre.error { border-color: var(--err); color: #f3b3af; }
 .t-cc { background: #a98bdb; }
 
 /* ---------- Chat ---------- */
-.chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-col { position: relative; display: flex; min-width: 0; min-height: 0; height: 100%; }
+.chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; }
 .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
 .messages > * { flex-shrink: 0; }
 .empty { margin: auto; text-align: center; color: var(--muted); max-width: 480px; }
@@ -454,3 +455,30 @@ details summary { cursor: pointer; }
 .history-filter input.text { padding: 4px 8px; font-size: 12px; }
 .history-filter label { display: flex; align-items: center; gap: 4px; color: var(--muted); cursor: pointer; }
 .history-filter label input { accent-color: var(--accent); }
+
+/* ---------- Resizable / collapsible panels ---------- */
+.resizer {
+  position: absolute; top: 0; bottom: 0; width: 8px; z-index: 20;
+  cursor: col-resize; touch-action: none;
+}
+.resizer.left { left: -4px; }
+.resizer.right { right: -4px; }
+.resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: transparent; transition: background 0.15s;
+}
+.resizer:hover::after, .resizer.dragging::after { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing * { cursor: col-resize !important; }
+
+.panel-toggle {
+  position: absolute; top: 8px; z-index: 15;
+  width: 28px; height: 28px; padding: 0; line-height: 1;
+  font-size: 12px; color: var(--muted);
+  background: rgba(22, 26, 33, 0.85); border: 1px solid var(--border); border-radius: 6px;
+  opacity: 0.55; transition: opacity 0.15s;
+}
+.panel-toggle:hover { opacity: 1; color: var(--text); }
+.panel-toggle.closed { opacity: 0.9; width: auto; padding: 0 8px; }
+.panel-toggle.left { left: 8px; }
+.panel-toggle.right { right: 8px; }
