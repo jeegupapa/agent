@@ -17,6 +17,23 @@ export interface ToolCallRecord {
   fileBefore?: string
   /** Edit/Write 계열: 실행 직후 파일 내용 */
   fileAfter?: string
+  /** Agent/Task 호출: 서브에이전트 진행 정보 (SDK task_* 메시지) */
+  subagent?: SubagentInfo
+}
+
+/** 서브에이전트(Agent/Task) 진행 정보 */
+export interface SubagentInfo {
+  description?: string
+  subagentType?: string
+  /** 서브에이전트에게 준 전체 지시문 */
+  prompt?: string
+  status?: 'running' | 'completed' | 'failed' | 'stopped'
+  /** 모델이 만든 진행 요약 (최신) / 완료 후에는 최종 요약 */
+  summary?: string
+  lastTool?: string
+  totalTokens?: number
+  toolUses?: number
+  durationMs?: number
 }
 
 export interface UsageSummary {
@@ -61,6 +78,7 @@ export type ClaudeEvent =
   | { kind: 'thinking_delta'; text: string }
   | { kind: 'tool_start'; call: ToolCallRecord }
   | { kind: 'tool_result'; id: string; result: string; isError: boolean; fileAfter?: string }
+  | { kind: 'subagent_info'; parentId: string; info: SubagentInfo }
   | { kind: 'result'; usage: UsageSummary; sessionId: string; isError: boolean; errorText?: string }
   | { kind: 'rate_limit'; windows: PlanWindow[]; isUsingOverage: boolean; updatedAt: number }
   | { kind: 'error'; message: string }

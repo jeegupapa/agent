@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import type { ToolCallRecord } from '../../../shared/types'
 import { toolIcon, toolSummary } from './ToolChip'
+import { Markdown } from './Markdown'
+
+function fmtTok(n?: number): string {
+  if (!n) return '0'
+  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
+}
 
 interface Props {
   calls: ToolCallRecord[]
@@ -103,6 +109,40 @@ export function ToolLog(p: Props) {
           </h3>
           <h4>입력</h4>
           <pre>{JSON.stringify(sel.input, null, 2)}</pre>
+          {sel.subagent && (
+            <div className="sub-output">
+              <div className="sub-head">
+                <b>서브에이전트</b>
+                {sel.subagent.subagentType && <span className="badge">{sel.subagent.subagentType}</span>}
+                <span className={`state ${sel.subagent.status ?? 'running'}`}>
+                  {sel.subagent.status === 'completed'
+                    ? '완료'
+                    : sel.subagent.status === 'failed'
+                      ? '실패'
+                      : sel.subagent.status === 'stopped'
+                        ? '중단'
+                        : '진행 중'}
+                </span>
+                <span className="muted small">
+                  도구 {sel.subagent.toolUses ?? p.calls.filter((c) => c.parentId === sel.id).length}회 · 토큰{' '}
+                  {fmtTok(sel.subagent.totalTokens)}
+                  {sel.subagent.durationMs ? ` · ${(sel.subagent.durationMs / 1000).toFixed(0)}s` : ''}
+                  {sel.subagent.lastTool && sel.subagent.status !== 'completed' ? ` · 마지막: ${sel.subagent.lastTool}` : ''}
+                </span>
+              </div>
+              {sel.subagent.summary && (
+                <div className="bubble md sub-output-body">
+                  <Markdown text={sel.subagent.summary} />
+                </div>
+              )}
+              {sel.subagent.prompt && (
+                <details>
+                  <summary>지시문 ({sel.subagent.prompt.length.toLocaleString()}자)</summary>
+                  <pre>{sel.subagent.prompt}</pre>
+                </details>
+              )}
+            </div>
+          )}
           <h4>결과</h4>
           <pre className={sel.isError ? 'error' : ''}>
             {sel.result ?? (sel.status === 'running' ? '(실행 중…)' : '(없음)')}

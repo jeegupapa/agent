@@ -24,6 +24,7 @@ interface Props {
   updateStatus: UpdateStatus | null
   history: {
     enabled: boolean
+    cwd: string
     user: FbUser | null
     sessions: SavedSessionMeta[]
     currentId?: string

@@ -72,7 +72,12 @@ export function ToolChip({
       <span className="icon">{toolIcon(call.name)}</span>
       <span className="name">{call.name}</span>
       <span className="summary">{toolSummary(call)}</span>
-      {childCount > 0 && <span className="badge">도구 {childCount}</span>}
+      {(call.subagent?.toolUses ?? childCount) > 0 && (
+        <span className="badge">도구 {call.subagent?.toolUses ?? childCount}</span>
+      )}
+      {call.status === 'running' && call.subagent?.lastTool && (
+        <span className="badge">{call.subagent.lastTool}</span>
+      )}
       <span className={`state ${call.status}`}>
         {call.status === 'running' ? '실행 중' : call.status === 'done' ? '완료' : call.status === 'denied' ? '거부됨' : '오류'}
       </span>

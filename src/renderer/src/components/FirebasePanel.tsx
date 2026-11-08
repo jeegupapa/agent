@@ -17,6 +17,8 @@ function fmtWhen(ms: number): string {
 /** 사이드바 "세션 기록" */
 export function SessionHistory(p: {
   enabled: boolean
+  /** 현재 작업 폴더 ("이 폴더만" 필터용) */
+  cwd: string
   user: FbUser | null
   sessions: SavedSessionMeta[]
   currentId?: string
@@ -47,16 +49,54 @@ export function SessionHistory(p: {
       </div>
     )
   }
+  return <SessionHistoryList {...p} />
+}
+
+function normPath(s: string): string {
+  return s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+function SessionHistoryList(p: Parameters<typeof SessionHistory>[0]) {
+  const [q, setQ] = useState('')
+  const [onlyHere, setOnlyHere] = useState(false)
+  const needle = q.trim().toLowerCase()
+  const list = p.sessions.filter((s) => {
+    if (onlyHere && normPath(s.cwd) !== normPath(p.cwd)) return false
+    if (!needle) return true
+    return s.title.toLowerCase().includes(needle) || s.cwd.toLowerCase().includes(needle)
+  })
+  const hereCount = p.sessions.filter((s) => normPath(s.cwd) === normPath(p.cwd)).length
+
   return (
     <div className="history">
+      {p.sessions.length > 3 && (
+        <div className="history-filter">
+          <input
+            className="text"
+            placeholder="제목·폴더 검색"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <label className="small" title={p.cwd}>
+            <input type="checkbox" checked={onlyHere} onChange={(e) => setOnlyHere(e.target.checked)} /> 이 폴더만
+            {hereCount ? ` (${hereCount})` : ''}
+          </label>
+        </div>
+      )}
       <div className="history-status muted small">
         {p.sync.kind === 'saving' && '저장 중…'}
         {p.sync.kind === 'saved' && `저장됨 ${fmtWhen(p.sync.at)}`}
         {p.sync.kind === 'error' && <span className="danger" title={p.sync.message}>저장 실패</span>}
-        {p.sync.kind === 'idle' && (p.sessions.length ? `${p.sessions.length}개` : '아직 저장된 세션 없음')}
+        {p.sync.kind === 'idle' &&
+          (p.sessions.length
+            ? list.length === p.sessions.length
+              ? `${p.sessions.length}개`
+              : `${list.length} / ${p.sessions.length}개`
+            : '아직 저장된 세션 없음')}
       </div>
       <ul className="history-list">
-        {p.sessions.map((s) => (
+        {list.length === 0 && p.sessions.length > 0 && <li className="muted small" style={{ padding: 6, border: 'none' }}>조건에 맞는 세션이 없습니다.</li>}
+        {list.map((s) => (
           <li
             key={s.id}
             className={s.id === p.currentId ? 'active' : ''}

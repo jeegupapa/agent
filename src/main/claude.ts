@@ -16,6 +16,7 @@ import type {
   PermissionAnswer,
   PlanWindow,
   SendPromptArgs,
+  SubagentInfo,
   ToolCallRecord
 } from '../shared/types'
 
@@ -147,6 +148,8 @@ export class ClaudeRunner {
       // 켜져 있으면 ~/.claude 와 프로젝트 .claude 의 설정·MCP·스킬·CLAUDE.md 를 CLI 처럼 읽는다
       settingSources: config.inheritSettings ? ['user', 'project', 'local'] : [],
       model: config.model?.trim() || undefined,
+      // 서브에이전트 진행 상황을 task_progress.summary 로 받는다
+      agentProgressSummaries: true,
       canUseTool: async (toolName, input, { signal, suggestions }): Promise<PermissionResult> => {
         const requestId = randomUUID()
         const answer = await new Promise<PermissionAnswer>((resolve) => {
@@ -242,6 +245,46 @@ export class ClaudeRunner {
         } else if (msg.subtype === 'status') {
           const s = (msg as { status?: string | null }).status
           this.emit({ kind: 'status', text: s ? String(s) : '' })
+        } else if (msg.subtype === 'task_started') {
+          if (msg.tool_use_id && !msg.skip_transcript) {
+            this.emit({
+              kind: 'subagent_info',
+              parentId: msg.tool_use_id,
+              info: {
+                description: msg.description,
+                subagentType: msg.subagent_type,
+                prompt: msg.prompt,
+                status: 'running'
+              }
+            })
+          }
+        } else if (msg.subtype === 'task_progress') {
+          if (msg.tool_use_id) {
+            const info: SubagentInfo = {
+              description: msg.description,
+              subagentType: msg.subagent_type,
+              lastTool: msg.last_tool_name,
+              totalTokens: msg.usage?.total_tokens,
+              toolUses: msg.usage?.tool_uses,
+              durationMs: msg.usage?.duration_ms
+            }
+            if (msg.summary) info.summary = msg.summary
+            this.emit({ kind: 'subagent_info', parentId: msg.tool_use_id, info })
+          }
+        } else if (msg.subtype === 'task_notification') {
+          if (msg.tool_use_id && !msg.skip_transcript) {
+            this.emit({
+              kind: 'subagent_info',
+              parentId: msg.tool_use_id,
+              info: {
+                status: msg.status,
+                summary: msg.summary || undefined,
+                totalTokens: msg.usage?.total_tokens,
+                toolUses: msg.usage?.tool_uses,
+                durationMs: msg.usage?.duration_ms
+              }
+            })
+          }
         }
         break
       }

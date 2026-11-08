@@ -256,6 +256,16 @@ export default function App() {
         dirty.current = true
         setStatus('')
         break
+      case 'subagent_info':
+        setToolCalls((prev) =>
+          prev.map((c) => {
+            if (c.id !== ev.parentId) return c
+            // undefined 로 기존 값을 덮어쓰지 않도록 정의된 필드만 병합
+            const patch = Object.fromEntries(Object.entries(ev.info).filter(([, v]) => v !== undefined))
+            return { ...c, subagent: { ...(c.subagent ?? {}), ...patch } }
+          })
+        )
+        break
       case 'rate_limit':
         setPlan({ windows: ev.windows, isUsingOverage: ev.isUsingOverage, updatedAt: ev.updatedAt })
         break
@@ -388,6 +398,7 @@ export default function App() {
         updateStatus={updateStatus}
         history={{
           enabled: !!(config?.firebase.enabled && config.firebase.config),
+          cwd,
           user: fbUser,
           sessions: savedSessions,
           currentId: sessionId,

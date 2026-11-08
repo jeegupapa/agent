@@ -436,3 +436,16 @@ details summary { cursor: pointer; }
 .diff-line.fold .code { padding-left: 8px; }
 .diff-stat { font-size: 11px; color: var(--muted); }
 .diff-stat .add { color: var(--ok); } .diff-stat .del { color: var(--err); }
+
+/* ---------- Subagent output / history filter ---------- */
+.sub-output { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); margin: 6px 0; }
+.sub-output { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.sub-head { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.sub-output summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.sub-output summary:hover { color: var(--text); }
+.sub-output details pre { margin-top: 6px; max-height: 200px; }
+.sub-output-body { font-size: 13px; max-height: 240px; overflow: auto; padding: 6px 8px; background: var(--bg-2); border-radius: 6px; }
+.history-filter { display: flex; flex-direction: column; gap: 4px; }
+.history-filter input.text { padding: 4px 8px; font-size: 12px; }
+.history-filter label { display: flex; align-items: center; gap: 4px; color: var(--muted); cursor: pointer; }
+.history-filter label input { accent-color: var(--accent); }
