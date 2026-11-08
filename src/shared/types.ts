@@ -226,6 +226,8 @@ export interface AppConfigView extends AppConfig {
   hasApiKey: boolean
   /** 키 끝 4자리 (표시용) */
   apiKeyHint?: string
+  /** 비공개 GitHub 저장소 업데이트용 토큰 저장 여부 (토큰 자체는 렌더러로 보내지 않음) */
+  hasUpdateToken: boolean
 }
 
 export const DEFAULT_UPDATE_CONFIG: UpdateConfig = {

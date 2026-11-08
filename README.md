@@ -62,11 +62,21 @@ Firebase(Authentication + Firestore)를 데이터베이스로 써서 세션 기�
 - 보안 규칙은 로그인한 사용자가 자기 `users/{uid}` 아래 문서만 읽고 쓰도록 제한합니다. Auth·Firestore
   에뮬레이터(`127.0.0.1:9099,127.0.0.1:8080`)로 등록·저장·목록·불러오기·삭제·규칙 차단을 검증했습니다.
 - 개발용: Firebase 탭 → "에뮬레이터" 에 호스트를 적으면 실제 프로젝트 대신 로컬 에뮬레이터에 붙습니다.
+- 렌더러의 CSP(`src/renderer/index.html`)가 `connect-src` 로 `*.googleapis.com`, `*.firebaseapp.com`, `*.firebaseio.com`
+  과 127.0.0.1/localhost(에뮬레이터)를 허용합니다. 여기 없는 주소로는 요청이 막혀 `auth/network-request-failed` 가 납니다.
 
 ## 자동 업데이트
 
 electron-updater 로 앱 자체를 자동 업데이트합니다. 기본 배포 위치는 **GitHub Releases
 (`jeegupapa/agent`)** 이며, 태그를 푸시하면 GitHub Actions 가 설치 파일을 빌드해 Release 에 올립니다.
+
+### 비공개 저장소일 때
+저장소가 비공개면 설치된 앱이 로그인 없이는 Release 를 읽지 못해 `404 … releases.atom` 오류가 납니다. 두 가지 중 하나를 고릅니다.
+- **저장소를 공개로 전환** (GitHub → Settings → Danger Zone → Change visibility). 설정 없이 바로 동작합니다.
+- **토큰 사용**: GitHub → Settings → Developer settings → Fine-grained tokens 에서 이 저장소의 *Contents: Read-only*
+  권한만 가진 토큰을 만들어, 앱 설정 → 업데이트 → "GitHub 토큰" 에 넣습니다. 토큰은 DPAPI 로 암호화되어
+  `%APPDATA%\claude-cli-studio\ghtoken.bin` 에 저장되고, electron-updater 가 GitHub API 로 Release 를 읽어 받습니다.
+  PC 마다 한 번씩 넣어야 합니다.
 
 ### 새 버전 배포
 ```bash

@@ -17,6 +17,7 @@ export class ConfigStore {
   private dir = app.getPath('userData')
   private configPath = join(this.dir, 'config.json')
   private keyPath = join(this.dir, 'apikey.bin')
+  private ghTokenPath = join(this.dir, 'ghtoken.bin')
 
   load(): AppConfig {
     try {
@@ -47,8 +48,40 @@ export class ConfigStore {
     return {
       ...this.load(),
       hasApiKey: key !== null,
-      apiKeyHint: key ? key.slice(-4) : undefined
+      apiKeyHint: key ? key.slice(-4) : undefined,
+      hasUpdateToken: this.getUpdateToken() !== null
     }
+  }
+
+  /** 비공개 GitHub 저장소에서 업데이트를 받을 때 쓰는 토큰 (DPAPI 암호화) */
+  getUpdateToken(): string | null {
+    return this.readSecret(this.ghTokenPath)
+  }
+
+  setUpdateToken(token: string | null): void {
+    this.writeSecret(this.ghTokenPath, token)
+  }
+
+  private readSecret(path: string): string | null {
+    try {
+      if (!existsSync(path)) return null
+      const buf = readFileSync(path)
+      if (safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(buf)
+      return buf.toString('utf8')
+    } catch (err) {
+      console.error('비밀값 복호화 실패:', path, err)
+      return null
+    }
+  }
+
+  private writeSecret(path: string, value: string | null): void {
+    mkdirSync(this.dir, { recursive: true })
+    if (!value) {
+      if (existsSync(path)) unlinkSync(path)
+      return
+    }
+    const data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(value) : Buffer.from(value, 'utf8')
+    writeFileSync(path, data)
   }
 
   getApiKey(): string | null {

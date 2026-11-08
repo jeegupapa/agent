@@ -86,13 +86,21 @@ export function UpdateTab(p: {
   status: UpdateStatus | null
   running: boolean
   onChange: (c: AppConfig) => void
+  setMsg: (s: string) => void
 }) {
-  const [info, setInfo] = useState<{ version: string; packaged: boolean; feed: string; logPath: string } | null>(
-    null
-  )
-  useEffect(() => {
+  const [info, setInfo] = useState<{
+    version: string
+    packaged: boolean
+    feed: string
+    logPath: string
+    hasToken: boolean
+  } | null>(null)
+  const [token, setToken] = useState('')
+  const [tokenBusy, setTokenBusy] = useState(false)
+  const refreshInfo = (): void => {
     window.api.updateInfo().then(setInfo)
-  }, [p.status?.state, p.draft.update])
+  }
+  useEffect(refreshInfo, [p.status?.state, p.draft.update])
 
   const u = p.draft.update
   const s = p.status
@@ -205,6 +213,55 @@ export function UpdateTab(p: {
           </div>
         </label>
       </div>
+      {u.provider === 'github' && (
+        <div className="mcp-form">
+          <h4>GitHub 토큰 (비공개 저장소일 때만)</h4>
+          <div className="muted small">
+            저장소가 비공개면 로그인 없이는 Release 를 읽을 수 없어 404 가 납니다. GitHub → Settings → Developer
+            settings → Fine-grained tokens 에서 이 저장소의 <b>Contents: Read-only</b> 권한만 가진 토큰을 만들어
+            넣으세요. 토큰은 이 PC 의 자격 증명 저장소에 암호화되어 보관되며 화면에 다시 표시되지 않습니다.
+          </div>
+          <div className="row">
+            <input
+              type="password"
+              className="text mono"
+              placeholder={info?.hasToken ? '저장됨 (바꾸려면 새 토큰 입력)' : 'github_pat_… 또는 ghp_…'}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              autoComplete="off"
+            />
+            <button
+              disabled={!token.trim() || tokenBusy}
+              onClick={async () => {
+                setTokenBusy(true)
+                try {
+                  await window.api.setUpdateToken(token)
+                  setToken('')
+                  refreshInfo()
+                  p.setMsg('토큰을 저장했습니다. "지금 확인"으로 테스트하세요.')
+                } finally {
+                  setTokenBusy(false)
+                }
+              }}
+            >
+              토큰 저장
+            </button>
+            {info?.hasToken && (
+              <button
+                className="danger"
+                disabled={tokenBusy}
+                onClick={async () => {
+                  await window.api.setUpdateToken(null)
+                  refreshInfo()
+                  p.setMsg('토큰을 삭제했습니다.')
+                }}
+              >
+                삭제
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {u.provider === 'generic' ? (
         <label className="field">
           <span>업데이트 폴더 URL (비우면 빌드에 포함된 기본 주소)</span>

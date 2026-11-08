@@ -83,7 +83,11 @@ function createWindow(): void {
   })
 
   runner = new ClaudeRunner(win, () => ({ config: store.load(), apiKey: store.getApiKey() }))
-  updater = new AppUpdater(win, () => store.load().update)
+  updater = new AppUpdater(
+    win,
+    () => store.load().update,
+    () => store.getUpdateToken()
+  )
   win.webContents.once('did-finish-load', () => updater?.checkOnStartup())
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -168,8 +172,14 @@ app.whenReady().then(() => {
     version: app.getVersion(),
     packaged: app.isPackaged,
     feed: updater?.feedDescription() ?? '',
-    logPath: updater?.logPath() ?? ''
+    logPath: updater?.logPath() ?? '',
+    hasToken: store.getUpdateToken() !== null
   }))
+  ipcMain.handle('update:set-token', (_e, token: string | null) => {
+    store.setUpdateToken(token && token.trim() ? token.trim() : null)
+    updater?.applyConfig(store.load().update)
+    return store.view()
+  })
 
   createWindow()
 

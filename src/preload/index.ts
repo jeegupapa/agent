@@ -60,8 +60,10 @@ const api = {
   checkForUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:check'),
   downloadUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:download'),
   installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
-  updateInfo: (): Promise<{ version: string; packaged: boolean; feed: string; logPath: string }> =>
+  updateInfo: (): Promise<{ version: string; packaged: boolean; feed: string; logPath: string; hasToken: boolean }> =>
     ipcRenderer.invoke('update:info'),
+  setUpdateToken: (token: string | null): Promise<AppConfigView> =>
+    ipcRenderer.invoke('update:set-token', token),
   onUpdateStatus: (cb: (s: UpdateStatus) => void): (() => void) => {
     const handler = (_: unknown, s: UpdateStatus): void => cb(s)
     ipcRenderer.on('update:status', handler)

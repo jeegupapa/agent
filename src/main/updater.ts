@@ -9,9 +9,24 @@ import type { UpdateConfig, UpdateStatus } from '../shared/types'
 const PLACEHOLDER_HOST = 'example.invalid'
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 
+/** electron-updater 오류를 사람이 읽을 문장으로. 응답 헤더 덤프는 버린다 */
+function friendlyError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  const first = raw.split('\n')[0].trim()
+  if (/releases\.atom|api\.github\.com|github\.com\/.*\/releases/.test(raw) && /\b(404|401|403)\b/.test(first)) {
+    return 'GitHub 에서 Release 를 읽지 못했습니다 (' + (/\b(\d{3})\b/.exec(first)?.[1] ?? '오류') +
+      '). 저장소가 비공개이면 설정 → 업데이트 → "GitHub 토큰" 에 저장소 읽기 권한이 있는 토큰을 넣거나, 저장소를 공개로 바꾸세요. Release 가 아직 없을 때도 같은 오류가 납니다.'
+  }
+  if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|net::ERR/.test(raw)) {
+    return '업데이트 서버에 연결하지 못했습니다. 네트워크와 배포 위치를 확인하세요. (' + first.slice(0, 120) + ')'
+  }
+  if (/sha512|checksum/i.test(raw)) return '내려받은 파일의 체크섬이 맞지 않습니다. 다시 확인해 보세요.'
+  return first.length > 300 ? first.slice(0, 300) + '…' : first
+}
+
 type FeedOptions =
   | { provider: 'generic'; url: string }
-  | { provider: 'github'; owner: string; repo: string }
+  | { provider: 'github'; owner: string; repo: string; token?: string; private?: boolean }
 
 function releaseNotesText(info: UpdateInfo): string | undefined {
   const n = info.releaseNotes
@@ -32,7 +47,9 @@ export class AppUpdater {
 
   constructor(
     private win: BrowserWindow,
-    private getConfig: () => UpdateConfig
+    private getConfig: () => UpdateConfig,
+    /** 비공개 GitHub 저장소용 토큰 (없으면 null) */
+    private getToken: () => string | null = () => null
   ) {
     this.config = getConfig()
     log.initialize()
@@ -74,7 +91,7 @@ export class AppUpdater {
     )
     autoUpdater.on('error', (err) => {
       log.error('autoUpdater error', err)
-      this.set({ state: 'error', error: err?.message ?? String(err) })
+      this.set({ state: 'error', error: friendlyError(err) })
     })
 
     this.applyConfig(this.config)
@@ -88,6 +105,14 @@ export class AppUpdater {
 
     const feed = this.feedOptions(config)
     if (feed) {
+      if (feed.provider === 'github') {
+        // 토큰이 있으면 비공개 저장소용 프로바이더(GitHub API)로 받는다
+        const token = this.getToken()
+        if (token) {
+          feed.token = token
+          feed.private = true
+        }
+      }
       autoUpdater.setFeedURL(feed)
       if (this.status.state === 'disabled') this.set({ state: 'idle', error: undefined })
     } else {
@@ -116,7 +141,7 @@ export class AppUpdater {
       await autoUpdater.checkForUpdates()
     } catch (err) {
       // error 이벤트로도 오지만, 피드 설정 오류처럼 이벤트 없이 던지는 경우를 대비한다
-      this.set({ state: 'error', error: err instanceof Error ? err.message : String(err) })
+      this.set({ state: 'error', error: friendlyError(err) })
     }
     return this.status
   }
@@ -150,7 +175,10 @@ export class AppUpdater {
   feedDescription(): string {
     const feed = this.feedOptions(this.config)
     if (!feed) return ''
-    return feed.provider === 'github' ? `GitHub ${feed.owner}/${feed.repo}` : feed.url
+    if (feed.provider === 'github') {
+      return `GitHub ${feed.owner}/${feed.repo}${this.getToken() ? ' (토큰 사용)' : ''}`
+    }
+    return feed.url
   }
 
   // ---------- 내부 ----------

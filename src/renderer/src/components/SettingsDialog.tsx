@@ -130,7 +130,7 @@ export function SettingsDialog(p: Props) {
             <FirebaseTab draft={draft} user={p.fbUser} onChange={setDraft} setMsg={setMsg} />
           )}
           {tab === 'update' && (
-            <UpdateTab draft={draft} status={p.updateStatus} running={p.running} onChange={setDraft} />
+            <UpdateTab draft={draft} status={p.updateStatus} running={p.running} onChange={setDraft} setMsg={setMsg} />
           )}
           {tab === 'skills' && (
             <SkillsTab
