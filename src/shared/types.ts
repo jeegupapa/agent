@@ -234,7 +234,9 @@ export const DEFAULT_FIREBASE_CONFIG: FirebaseWebConfig = {
 export const DEFAULT_FIREBASE_SETTINGS: FirebaseSettings = {
   enabled: true,
   saveSessions: true,
-  config: DEFAULT_FIREBASE_CONFIG
+  config: DEFAULT_FIREBASE_CONFIG,
+  // 콘솔에서 "(default)" 가 아닌 "default" 라는 이름으로 만들어진 데이터베이스
+  databaseId: 'default'
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
