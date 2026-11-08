@@ -67,6 +67,7 @@ export class TeamRunner {
     return (
       `# 역할\n당신의 이름은 "${e.name}", 직함은 "${e.role}" 입니다. 전문 분야: ${e.specialty}\n\n` +
       `# 지시문\n${e.instructions.trim()}` +
+      (args.memory ? `\n\n${args.memory.trim()}` : '') +
       TEAM_REPORT_RULES
     )
   }
@@ -124,7 +125,7 @@ ${emps}
 맞는 직원이 없으면 presetRole 에 아래 직함을 그대로 적으세요. 자동으로 채용됩니다.
 ${presets}
 
-# 배분 규칙
+${args.memory ? `${args.memory.trim()}\n\n` : ''}# 배분 규칙
 - 요청이 단순 질문·대화·의견이라 직원에게 맡길 일이 아니면 assignments 를 빈 배열로 두고 directAnswer 에 직접 답하세요.
 - 역할이 다른 일은 작업을 나눌 수 있습니다 (예: 구현 → 프론트엔드 개발자, 검증 → QA 엔지니어). 단, 작업들은 동시에 실행되므로 서로의 결과에 의존하는 일은 한 작업으로 합치세요.
 - 보통 1~3개 작업이면 충분합니다. 불필요하게 쪼개지 마세요.

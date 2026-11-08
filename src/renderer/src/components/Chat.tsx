@@ -33,6 +33,8 @@ interface Props {
   onSelectTool: (id: string) => void
   onReviewTask: (taskId: string, decision: 'approved' | 'changes_requested', comment: string) => void
   onOpenTask: (taskId: string) => void
+  /** 메시지를 메모리로 저장 (💾 버튼) */
+  onRemember: (text: string) => void
 }
 
 export function Chat(p: Props) {
@@ -49,7 +51,9 @@ export function Chat(p: Props) {
 
   useEffect(() => {
     if (p.insertRequest) {
-      setDraft((d) => (d ? d + ' ' : '') + p.insertRequest!.text)
+      // 여러 줄(참조 블록)은 줄을 바꿔 붙인다
+      const text = p.insertRequest.text
+      setDraft((d) => (d ? d + (text.includes('\n') ? '\n' : ' ') : '') + text)
       textareaRef.current?.focus()
     }
   }, [p.insertRequest])
@@ -109,6 +113,9 @@ export function Chat(p: Props) {
               return (
                 <div key={it.id} className="msg user">
                   <div className="bubble">{it.text}</div>
+                  <button className="remember-btn" title="이 메시지를 메모리로 저장" onClick={() => p.onRemember(it.text)}>
+                    💾
+                  </button>
                 </div>
               )
             case 'assistant':
@@ -118,6 +125,11 @@ export function Chat(p: Props) {
                     <Markdown text={it.text} />
                     {it.streaming && <span className="cursor" />}
                   </div>
+                  {!it.streaming && (
+                    <button className="remember-btn" title="이 답변을 메모리로 저장" onClick={() => p.onRemember(it.text)}>
+                      💾
+                    </button>
+                  )}
                 </div>
               )
             case 'tool': {

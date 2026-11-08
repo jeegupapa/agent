@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { planName } from './Sidebar'
+import { MemoryTab } from '../memory/MemoryTab'
+import type { MemoryStore } from '../memory/store'
 import type {
   AppConfig,
   AppConfigView,
@@ -15,7 +17,7 @@ import { UpdateTab } from './UpdatePanel'
 import { FirebaseTab } from './FirebasePanel'
 import type { FbUser } from '../firebase'
 
-type Tab = 'auth' | 'mcp' | 'skills' | 'update' | 'firebase'
+type Tab = 'auth' | 'mcp' | 'skills' | 'update' | 'firebase' | 'memory'
 
 interface Props {
   config: AppConfigView
@@ -26,6 +28,7 @@ interface Props {
   authStatus: AuthStatus | null
   /** `claude auth status` 를 다시 읽는다 */
   onRefreshAuth: () => Promise<AuthStatus>
+  memory: MemoryStore
   running: boolean
   fbUser: FbUser | null
   onSave: (config: AppConfig) => Promise<void>
@@ -102,6 +105,9 @@ export function SettingsDialog(p: Props) {
           <button className={tab === 'skills' ? 'active' : ''} onClick={() => setTab('skills')}>
             스킬
           </button>
+          <button className={tab === 'memory' ? 'active' : ''} onClick={() => setTab('memory')}>
+            메모리 ({p.memory.memories.length})
+          </button>
           <button className={tab === 'firebase' ? 'active' : ''} onClick={() => setTab('firebase')}>
             Firebase
           </button>
@@ -127,6 +133,7 @@ export function SettingsDialog(p: Props) {
             />
           )}
           {tab === 'mcp' && <McpTab draft={draft} session={p.session} cwd={p.cwd} onChange={setDraft} />}
+          {tab === 'memory' && <MemoryTab store={p.memory} cwd={p.cwd} />}
           {tab === 'firebase' && (
             <FirebaseTab draft={draft} user={p.fbUser} onChange={setDraft} setMsg={setMsg} />
           )}

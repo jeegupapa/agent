@@ -176,10 +176,8 @@ export class ClaudeRunner {
       // 켜져 있으면 ~/.claude 와 프로젝트 .claude 의 설정·MCP·스킬·CLAUDE.md 를 CLI 처럼 읽는다
       settingSources: config.inheritSettings ? ['user', 'project', 'local'] : [],
       model: args.model?.trim() || config.model?.trim() || undefined,
-      // 직원(팀) 실행: Claude Code 기본 프롬프트 뒤에 역할 지시문을 붙인다
-      systemPrompt: args.systemPromptAppend
-        ? { type: 'preset', preset: 'claude_code', append: args.systemPromptAppend }
-        : undefined,
+      // 항상 Claude Code 기본 시스템 프롬프트를 쓰고, 그 뒤에 역할 지시문(직원)·사용자 메모리를 붙인다
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: args.systemPromptAppend?.trim() || undefined },
       allowedTools: args.allowedTools,
       disallowedTools: args.disallowedTools,
       maxTurns: args.maxTurns,

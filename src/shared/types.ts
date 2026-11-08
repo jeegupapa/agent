@@ -214,6 +214,24 @@ export interface TeamStartArgs {
   employee: Employee
   /** 수정 요청 등 추가 지시. 있으면 이것을 프롬프트로 쓰고 세션을 이어간다 */
   followUp?: string
+  /** 사용자 메모리(renderMemory 결과). 직원 지시문 뒤에 붙는다 */
+  memory?: string
+}
+
+// ---------- 메모리 (채팅에서 "기억해" 로 저장한 내용) ----------
+
+/** 사용자가 저장한 메모리 한 건. 세션 시작 시 시스템 프롬프트에 붙어 Claude 가 참고한다 */
+export interface MemoryItem {
+  id: string
+  text: string
+  /** global: 모든 폴더에서 / project: cwd 폴더에서만 */
+  scope: 'global' | 'project'
+  cwd?: string
+  enabled: boolean
+  /** 어디서 만들었는지 */
+  source?: { kind: 'chat' | 'command' | 'manual'; sessionId?: string; sessionTitle?: string }
+  createdAt: number
+  updatedAt: number
 }
 
 // ---------- 팀장 배분 (채팅 요청 → 직원 작업) ----------
@@ -239,6 +257,8 @@ export interface DispatchArgs {
   employees: Pick<Employee, 'id' | 'name' | 'role' | 'specialty'>[]
   /** 팀장이 쓸 모델 (비우면 기본 모델) */
   model?: string
+  /** 사용자 메모리. 배분할 때 참고 */
+  memory?: string
 }
 
 /** 바로 쓸 수 있는 직원 템플릿 */

@@ -591,3 +591,34 @@ body.resizing * { cursor: col-resize !important; }
 .tc-actions input.text { flex: 1; min-width: 200px; }
 button.ghost-btn { background: transparent; border-color: transparent; color: var(--accent-2); }
 button.ghost-btn:hover { border-color: var(--border); }
+
+/* ----- 메모리 (기억해) ----- */
+.remember-btn { opacity: 0; align-self: flex-end; margin: 0 2px 2px; background: transparent; border: 1px solid transparent; font-size: 12px; padding: 2px 5px; color: var(--muted); border-radius: 6px; }
+.msg:hover .remember-btn { opacity: 0.75; }
+.remember-btn:hover { opacity: 1 !important; border-color: var(--border); color: var(--text); }
+.msg.user .remember-btn { order: -1; }
+.modal.memory-dialog { width: min(640px, 92vw); }
+.modal.memory-dialog .mode { padding: 8px 10px; }
+.memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.memory-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2); }
+.memory-row.off { opacity: 0.55; }
+.memory-row input[type="checkbox"] { margin-top: 3px; accent-color: var(--accent); }
+.memory-text { white-space: pre-wrap; font-size: 13px; line-height: 1.45; word-break: break-word; }
+.memory-meta { font-size: 11px; color: var(--muted); margin-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.memory-row .small-btn { margin-top: 0; }
+.kind-badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--bg-3); color: var(--muted); white-space: nowrap; }
+.sidebar h2.with-action { display: flex; align-items: center; justify-content: space-between; }
+.sidebar h2.with-action .small-btn { margin-top: 0; font-size: 11px; padding: 1px 6px; text-transform: none; letter-spacing: 0; }
+
+/* ----- 대화·보고서 검색 ----- */
+.modal.search { width: min(900px, 94vw); max-height: 86vh; display: flex; flex-direction: column; gap: 10px; }
+.search-head { display: flex; gap: 10px; align-items: center; }
+.search-head input.text { flex: 1; font-size: 14px; padding: 9px 11px; }
+.search-results { overflow-y: auto; min-height: 120px; display: flex; flex-direction: column; gap: 6px; }
+.search-hit { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--bg-2); display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.search-hit-head { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.search-hit-head b { color: var(--text); }
+.search-snippet { font-size: 13px; line-height: 1.5; word-break: break-word; }
+.search-snippet mark { background: rgba(217, 119, 87, 0.35); color: inherit; border-radius: 3px; padding: 0 2px; }
+.search-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.search-actions .small-btn { margin-top: 0; }

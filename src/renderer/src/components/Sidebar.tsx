@@ -45,7 +45,11 @@ interface Props {
   onPermissionModeChange: (mode: PermissionMode) => void
   /** 기본 모델 변경 (설정에 저장) */
   onModelChange: (model: string | undefined) => void
-  onOpenSettings: (tab: 'auth' | 'mcp' | 'skills' | 'update' | 'firebase') => void
+  onOpenSettings: (tab: 'auth' | 'mcp' | 'skills' | 'update' | 'firebase' | 'memory') => void
+  /** 대화·보고서 내용 검색 열기 (Ctrl+K) */
+  onOpenSearch: () => void
+  /** 이 폴더에 적용 중인 메모리 수 */
+  memoryCount: number
 }
 
 const MODES: { value: PermissionMode; label: string; desc: string }[] = [
@@ -262,6 +266,9 @@ function ConnectionView(p: Props) {
         <button className="small-btn" onClick={() => p.onOpenSettings('skills')}>
           스킬
         </button>
+        <button className="small-btn" onClick={() => p.onOpenSettings('memory')} title="채팅에서 '기억해: …' 로 저장한 메모리">
+          메모리{p.memoryCount ? ` ${p.memoryCount}` : ''}
+        </button>
       </div>
     </div>
   )
@@ -320,7 +327,12 @@ export function Sidebar(p: Props) {
       </section>
 
       <section>
-        <h2>세션 기록</h2>
+        <h2 className="with-action">
+          세션 기록
+          <button className="ghost small-btn" onClick={p.onOpenSearch} title="대화·보고서 내용 검색 (Ctrl+K)">
+            🔍 검색
+          </button>
+        </h2>
         <SessionHistory {...p.history} running={p.running} onOpenSettings={() => p.onOpenSettings('firebase')} />
       </section>
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AppConfig,
   AppConfigView,
@@ -15,8 +15,11 @@ import type {
   UpdateStatus,
   UsageSummary
 } from '../../shared/types'
-import { EMPLOYEE_PRESETS } from '../../shared/types'
+import { EMPLOYEE_PRESETS, type MemoryItem } from '../../shared/types'
 import { Sidebar } from './components/Sidebar'
+import { SearchDialog } from './components/SearchDialog'
+import { MemoryDialog } from './memory/MemoryDialog'
+import { activeMemories, parseRememberCommand, renderMemory, useMemoryStore } from './memory/store'
 import { Chat, type ChatItem } from './components/Chat'
 import { ToolLog } from './components/ToolLog'
 import { DiffPanel } from './components/DiffPanel'
@@ -46,7 +49,7 @@ export interface PlanUsage {
 }
 
 type RightTab = 'tools' | 'diff'
-type SettingsTab = 'auth' | 'mcp' | 'skills' | 'update' | 'firebase'
+type SettingsTab = 'auth' | 'mcp' | 'skills' | 'update' | 'firebase' | 'memory'
 
 const EMPTY_USAGE: UsageSummary = {
   totalCostUsd: 0,
@@ -134,6 +137,9 @@ export default function App() {
       } else if (e.key.toLowerCase() === 'j' && !e.shiftKey) {
         e.preventDefault()
         toggleRight()
+      } else if (e.key.toLowerCase() === 'k' && !e.shiftKey) {
+        e.preventDefault()
+        setSearchOpen((o) => !o)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -183,6 +189,16 @@ export default function App() {
       setSync({ kind: 'error', message: e.message })
     )
   }, [fbUser, fbSettings?.enabled])
+
+  // ----- 메모리 ("기억해" 로 저장한 내용 → 세션 시스템 프롬프트) -----
+  const memory = useMemoryStore(fbUser, !!fbSettings?.enabled)
+  const memoryText = useMemo(() => renderMemory(memory.memories, cwd), [memory.memories, cwd])
+  const memoryCount = useMemo(() => activeMemories(memory.memories, cwd).length, [memory.memories, cwd])
+  // 💾 버튼으로 여는 저장 대화상자
+  const [rememberDraft, setRememberDraft] = useState<{ text: string; source: MemoryItem['source'] } | null>(null)
+  // 대화·보고서 검색 (Ctrl+K)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const currentTitle = items.find((i) => i.type === 'user')?.text.slice(0, 60) ?? '현재 대화'
 
   // ----- 팀 (직원 에이전트) -----
   const team = useTeamStore(fbUser, !!fbSettings?.enabled)
@@ -248,7 +264,7 @@ export default function App() {
     setRuntimeVersion((v) => v + 1)
     if (!opts.stay) setMode('team')
     window.api
-      .teamStart({ task: started, employee, followUp })
+      .teamStart({ task: started, employee, followUp, memory: memoryText })
       .catch((err) => {
         patchTaskRef.current(task.id, { status: 'failed', finishedAt: Date.now(), error: err instanceof Error ? err.message : String(err) })
       })
@@ -297,7 +313,8 @@ export default function App() {
         request: prompt,
         cwd,
         employees: team.employees.map(({ id, name, role, specialty }) => ({ id, name, role, specialty })),
-        model: config?.model || undefined
+        model: config?.model || undefined,
+        memory: memoryText
       })
       if (plan.assignments.length === 0) {
         setItems((prev) => [
@@ -470,14 +487,13 @@ export default function App() {
         })
         break
       }
-      case 'text_done':
-        setItems((prev) =>
-          prev.map((it) =>
-            it.id === streamingId.current && it.type === 'assistant' ? { ...it, streaming: false } : it
-          )
-        )
+      case 'text_done': {
+        // setItems 의 updater 는 나중에 실행되므로 id 를 먼저 잡아 둔다 (안 그러면 커서가 계속 남는다)
+        const sid = streamingId.current
         streamingId.current = null
+        setItems((prev) => prev.map((it) => (it.id === sid && it.type === 'assistant' ? { ...it, streaming: false } : it)))
         break
+      }
       case 'thinking_delta':
         break
       case 'tool_start':
@@ -565,15 +581,41 @@ export default function App() {
     }
   }, [handleEvent])
 
+  /** 💾 버튼 또는 "기억해:" 명령으로 메모리를 만든다. command 는 바로 저장, chat 은 대화상자로 확인 */
+  const rememberFromChat = (text: string, kind: 'chat' | 'command'): void => {
+    const source: MemoryItem['source'] = { kind, sessionId, sessionTitle: currentTitle }
+    if (kind === 'chat') {
+      setRememberDraft({ text: text.length > 4000 ? text.slice(0, 4000) + '\n…(중략)' : text, source })
+      return
+    }
+    const now = Date.now()
+    memory.upsert({ id: crypto.randomUUID(), text, scope: 'project', cwd, enabled: true, source, createdAt: now, updatedAt: now })
+    setItems((prev) => [
+      ...prev,
+      {
+        id: `s-${now}`,
+        type: 'system',
+        text: `💾 메모리에 저장했습니다 (이 폴더): "${text.length > 80 ? text.slice(0, 80) + '…' : text}"\n다음 요청부터 적용됩니다. 설정 → 메모리에서 수정하거나 모든 폴더로 바꿀 수 있습니다.`
+      }
+    ])
+  }
+
   const send = async (prompt: string): Promise<void> => {
     if (!prompt.trim() || running) return
+    // "기억해: …" 는 Claude 에게 보내지 않고 메모리에 저장한다
+    const rememberText = parseRememberCommand(prompt)
+    if (rememberText) {
+      setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: prompt }])
+      rememberFromChat(rememberText, 'command')
+      return
+    }
     if (teamChat) return dispatchToTeam(prompt)
     setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: prompt }])
     setRunning(true)
     setStatus('요청 중…')
     try {
       try {
-        await window.api.send({ prompt, cwd, sessionId, permissionMode })
+        await window.api.send({ prompt, cwd, sessionId, permissionMode, systemPromptAppend: memoryText })
       } catch (err) {
         // Firestore 에서 복원한 세션은 다른 PC 에서 만든 것일 수 있어 resume 이 실패한다 → 새 세션으로 다시 보낸다
         const msg = err instanceof Error ? err.message : String(err)
@@ -589,7 +631,7 @@ export default function App() {
               text: '이전 세션을 이 PC 에서 이어갈 수 없어 새 세션으로 시작합니다.'
             }
           ])
-          await window.api.send({ prompt, cwd, sessionId: undefined, permissionMode })
+          await window.api.send({ prompt, cwd, sessionId: undefined, permissionMode, systemPromptAppend: memoryText })
         } else {
           throw err
         }
@@ -609,6 +651,8 @@ export default function App() {
       setRunning(false)
       setStatus('')
       streamingId.current = null
+      // 턴이 끝났는데 스트리밍 표시가 남은 항목이 있으면 정리
+      setItems((prev) => (prev.some((it) => it.type === 'assistant' && it.streaming) ? prev.map((it) => (it.type === 'assistant' && it.streaming ? { ...it, streaming: false } : it)) : prev))
     }
   }
 
@@ -714,6 +758,8 @@ export default function App() {
         onPermissionModeChange={setPermissionMode}
         onModelChange={changeModel}
         onOpenSettings={(tab) => setSettingsTab(tab)}
+        onOpenSearch={() => setSearchOpen(true)}
+        memoryCount={memoryCount}
       />
       ) : (
         <div />
@@ -788,6 +834,7 @@ export default function App() {
           setSelectedTool(null)
           setMode('team')
         }}
+        onRemember={(text) => rememberFromChat(text, 'chat')}
       />
       )}
         {layout.rightOpen && (
@@ -820,6 +867,53 @@ export default function App() {
       ) : (
         <div />
       )}
+      {rememberDraft && (
+        <MemoryDialog
+          initial={{ text: rememberDraft.text, scope: 'project', cwd, source: rememberDraft.source }}
+          cwd={cwd}
+          onSave={(m) => {
+            memory.upsert(m)
+            setRememberDraft(null)
+            setItems((prev) => [
+              ...prev,
+              {
+                id: `s-${Date.now()}`,
+                type: 'system',
+                text: `💾 메모리에 저장했습니다 (${m.scope === 'global' ? '모든 폴더' : '이 폴더'}). 다음 요청부터 적용됩니다.`
+              }
+            ])
+          }}
+          onCancel={() => setRememberDraft(null)}
+        />
+      )}
+      {searchOpen && (
+        <SearchDialog
+          user={fbUser}
+          firebaseEnabled={!!fbSettings?.enabled}
+          sessions={savedSessions}
+          currentSessionId={sessionId}
+          current={{ title: currentTitle, items }}
+          tasks={team.tasks}
+          employees={team.employees}
+          cwd={cwd}
+          onOpenSession={(id) => {
+            setSearchOpen(false)
+            void openSavedSession(id)
+          }}
+          onOpenTask={(id) => {
+            setSearchOpen(false)
+            setSelectedTaskId(id)
+            setSelectedTool(null)
+            setMode('team')
+          }}
+          onReference={(text) => {
+            setSearchOpen(false)
+            setMode('chat')
+            setInsertRequest({ text, nonce: Date.now() })
+          }}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
       {permission && (
         <PermissionDialog
           request={permission}
@@ -839,6 +933,7 @@ export default function App() {
           updateStatus={updateStatus}
           authStatus={authStatus}
           onRefreshAuth={refreshAuth}
+          memory={memory}
           running={running}
           fbUser={fbUser}
           onSave={saveConfig}
