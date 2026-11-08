@@ -11,6 +11,12 @@ export interface ToolCallRecord {
   finishedAt?: number
   result?: string
   isError?: boolean
+  /** 서브에이전트(Agent/Task) 안에서 실행된 도구면 부모 Agent 호출 id */
+  parentId?: string
+  /** Edit/Write 계열: 실행 직전 파일 내용 (새 파일이면 빈 문자열) */
+  fileBefore?: string
+  /** Edit/Write 계열: 실행 직후 파일 내용 */
+  fileAfter?: string
 }
 
 export interface UsageSummary {
@@ -54,7 +60,7 @@ export type ClaudeEvent =
   | { kind: 'text_done'; text: string }
   | { kind: 'thinking_delta'; text: string }
   | { kind: 'tool_start'; call: ToolCallRecord }
-  | { kind: 'tool_result'; id: string; result: string; isError: boolean }
+  | { kind: 'tool_result'; id: string; result: string; isError: boolean; fileAfter?: string }
   | { kind: 'result'; usage: UsageSummary; sessionId: string; isError: boolean; errorText?: string }
   | { kind: 'rate_limit'; windows: PlanWindow[]; isUsingOverage: boolean; updatedAt: number }
   | { kind: 'error'; message: string }

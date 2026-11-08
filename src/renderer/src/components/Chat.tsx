@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ToolCallRecord } from '../../../shared/types'
 import { ToolChip } from './ToolChip'
+import { Markdown } from './Markdown'
 
 export type ChatItem =
   | { id: string; type: 'user'; text: string }
@@ -84,8 +85,8 @@ export function Chat(p: Props) {
             case 'assistant':
               return (
                 <div key={it.id} className="msg assistant">
-                  <div className="bubble">
-                    {it.text}
+                  <div className="bubble md">
+                    <Markdown text={it.text} />
                     {it.streaming && <span className="cursor" />}
                   </div>
                 </div>
@@ -94,7 +95,11 @@ export function Chat(p: Props) {
               const call = callById(it.callId)
               return call ? (
                 <div key={it.id} className="msg tool">
-                  <ToolChip call={call} onClick={() => p.onSelectTool(call.id)} />
+                  <ToolChip
+                    call={call}
+                    childCount={p.toolCalls.filter((c) => c.parentId === call.id).length}
+                    onClick={() => p.onSelectTool(call.id)}
+                  />
                 </div>
               ) : null
             }

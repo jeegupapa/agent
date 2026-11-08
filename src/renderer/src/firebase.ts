@@ -166,6 +166,9 @@ function sessionsCol(uid: string) {
 function sanitize(s: SavedSession): SavedSession {
   const toolCalls = s.toolCalls.map((c) => ({
     ...c,
+    // 전체 파일 스냅샷은 크기가 커서 저장하지 않는다 (입력의 old/new 로 변경 부분 diff 는 남는다)
+    fileBefore: undefined,
+    fileAfter: undefined,
     result:
       c.result && c.result.length > MAX_RESULT_CHARS
         ? c.result.slice(0, MAX_RESULT_CHARS) + `\n… (${c.result.length - MAX_RESULT_CHARS}자 생략)`

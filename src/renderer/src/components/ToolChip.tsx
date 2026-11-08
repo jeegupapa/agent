@@ -57,12 +57,22 @@ export function toolIcon(name: string): string {
   }
 }
 
-export function ToolChip({ call, onClick }: { call: ToolCallRecord; onClick?: () => void }) {
+export function ToolChip({
+  call,
+  childCount = 0,
+  onClick
+}: {
+  call: ToolCallRecord
+  /** 서브에이전트가 실행한 하위 도구 수 */
+  childCount?: number
+  onClick?: () => void
+}) {
   return (
     <button className={`tool-chip ${call.status}`} onClick={onClick} title={JSON.stringify(call.input, null, 2)}>
       <span className="icon">{toolIcon(call.name)}</span>
       <span className="name">{call.name}</span>
       <span className="summary">{toolSummary(call)}</span>
+      {childCount > 0 && <span className="badge">도구 {childCount}</span>}
       <span className={`state ${call.status}`}>
         {call.status === 'running' ? '실행 중' : call.status === 'done' ? '완료' : call.status === 'denied' ? '거부됨' : '오류'}
       </span>

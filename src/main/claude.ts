@@ -8,6 +8,8 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
+import { readFileSync, statSync } from 'fs'
+import { isAbsolute, resolve } from 'path'
 import type {
   AppConfig,
   ClaudeEvent,
@@ -21,6 +23,33 @@ import type {
 function toMillis(t?: number): number | undefined {
   if (t === undefined || t === null) return undefined
   return t < 1e12 ? t * 1000 : t
+}
+
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+const MAX_SNAPSHOT_BYTES = 1_000_000
+
+/** Edit/Write 계열 도구가 건드리는 파일 경로 */
+function editTargetPath(name: string, input: Record<string, unknown>, cwd: string): string | null {
+  if (!EDIT_TOOLS.has(name)) return null
+  const p = input.file_path ?? input.notebook_path
+  if (typeof p !== 'string' || !p) return null
+  return isAbsolute(p) ? p : resolve(cwd, p)
+}
+
+/** 파일 내용 스냅샷. 없으면 빈 문자열, 너무 크거나 바이너리면 undefined */
+function snapshot(path: string): string | undefined {
+  try {
+    if (statSync(path).size > MAX_SNAPSHOT_BYTES) return undefined
+  } catch {
+    return ''
+  }
+  try {
+    const buf = readFileSync(path)
+    if (buf.includes(0)) return undefined
+    return buf.toString('utf8')
+  } catch {
+    return undefined
+  }
 }
 
 /** 앱 설정의 MCP 항목을 SDK 가 받는 형태로 변환 (켜진 것만) */
@@ -64,6 +93,11 @@ export function buildEnv(config: AppConfig, apiKey: string | null): Record<strin
 export class ClaudeRunner {
   private current: Query | null = null
   private pendingPermissions = new Map<string, (answer: PermissionAnswer) => void>()
+  /** 실행 중인 Edit/Write 호출 id → 대상 파일 경로 (완료 후 스냅샷용) */
+  private editTargets = new Map<string, string>()
+  private cwd = ''
+  /** 이미 tool_start 를 보낸 도구 id (stream_event 와 assistant 메시지 중복 방지) */
+  private emittedTools = new Set<string>()
 
   constructor(
     private win: BrowserWindow,
@@ -136,10 +170,14 @@ export class ClaudeRunner {
 
     const q = query({ prompt: args.prompt, options })
     this.current = q
+    this.cwd = args.cwd
+    this.editTargets.clear()
+    this.emittedTools.clear()
 
-    // stream_event 에서 현재 조립 중인 블록을 추적한다
+    // stream_event 에서 현재 조립 중인 블록을 추적한다. 키는 "부모 도구 id:블록 index"
+    // (서브에이전트가 병렬로 돌면 index 가 겹치므로)
     let currentText = ''
-    const openToolInputs = new Map<number, { id: string; name: string; json: string }>()
+    const openToolInputs = new Map<string, { id: string; name: string; json: string; parentId?: string }>()
 
     try {
       for await (const msg of q) {
@@ -162,12 +200,25 @@ export class ClaudeRunner {
     }
   }
 
+  /** tool_start 이벤트 발행 (+ 파일 편집 도구는 실행 직전 스냅샷) */
+  private emitToolStart(id: string, name: string, input: Record<string, unknown>, parentId?: string): void {
+    if (this.emittedTools.has(id)) return
+    this.emittedTools.add(id)
+    const call: ToolCallRecord = { id, name, input, status: 'running', startedAt: Date.now(), parentId }
+    const target = editTargetPath(name, input, this.cwd)
+    if (target) {
+      this.editTargets.set(id, target)
+      call.fileBefore = snapshot(target)
+    }
+    this.emit({ kind: 'tool_start', call })
+  }
+
   private handleMessage(
     msg: SDKMessage,
     ctx: {
       onText: (delta: string) => void
       onTextDone: () => void
-      openToolInputs: Map<number, { id: string; name: string; json: string }>
+      openToolInputs: Map<string, { id: string; name: string; json: string; parentId?: string }>
     }
   ): void {
     switch (msg.type) {
@@ -195,42 +246,54 @@ export class ClaudeRunner {
         break
       }
       case 'stream_event': {
-        if (msg.parent_tool_use_id) break // 서브에이전트 출력은 생략
+        // 서브에이전트(Agent/Task) 안의 출력: 텍스트는 생략하고 도구 호출만 부모 id 를 붙여 기록한다
+        const parentId = msg.parent_tool_use_id ?? undefined
         const ev = msg.event
+        const key = `${parentId ?? ''}:${'index' in ev ? ev.index : -1}`
         if (ev.type === 'content_block_start') {
           const block = ev.content_block
           if (block.type === 'tool_use') {
-            ctx.openToolInputs.set(ev.index, { id: block.id, name: block.name, json: '' })
+            ctx.openToolInputs.set(key, { id: block.id, name: block.name, json: '', parentId })
           }
         } else if (ev.type === 'content_block_delta') {
           const d = ev.delta
-          if (d.type === 'text_delta') ctx.onText(d.text)
-          else if (d.type === 'thinking_delta') this.emit({ kind: 'thinking_delta', text: d.thinking })
-          else if (d.type === 'input_json_delta') {
-            const open = ctx.openToolInputs.get(ev.index)
+          if (d.type === 'text_delta') {
+            if (!parentId) ctx.onText(d.text)
+          } else if (d.type === 'thinking_delta') {
+            if (!parentId) this.emit({ kind: 'thinking_delta', text: d.thinking })
+          } else if (d.type === 'input_json_delta') {
+            const open = ctx.openToolInputs.get(key)
             if (open) open.json += d.partial_json
           }
         } else if (ev.type === 'content_block_stop') {
-          const open = ctx.openToolInputs.get(ev.index)
+          const open = ctx.openToolInputs.get(key)
           if (open) {
-            ctx.openToolInputs.delete(ev.index)
+            ctx.openToolInputs.delete(key)
             let input: Record<string, unknown> = {}
             try {
               input = open.json ? JSON.parse(open.json) : {}
             } catch {
               input = { _raw: open.json }
             }
-            const call: ToolCallRecord = {
-              id: open.id,
-              name: open.name,
-              input,
-              status: 'running',
-              startedAt: Date.now()
+            if (!parentId) ctx.onTextDone()
+            this.emitToolStart(open.id, open.name, input, open.parentId)
+          } else if (!parentId) {
+            ctx.onTextDone()
+          }
+        }
+        break
+      }
+      case 'assistant': {
+        // 서브에이전트(Agent/Task) 안의 도구 호출은 stream_event 로 오지 않고 완성된 assistant 메시지로만 오므로
+        // 여기서 parent_tool_use_id 를 붙여 기록한다. 메인 에이전트 것은 stream_event 에서 이미 처리했다.
+        const parentId = msg.parent_tool_use_id ?? undefined
+        if (!parentId) break
+        const content = msg.message.content
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === 'tool_use') {
+              this.emitToolStart(block.id, block.name, (block.input ?? {}) as Record<string, unknown>, parentId)
             }
-            ctx.onTextDone()
-            this.emit({ kind: 'tool_start', call })
-          } else {
-            ctx.onTextDone()
           }
         }
         break
@@ -249,11 +312,18 @@ export class ClaudeRunner {
                         .map((c) => (c.type === 'text' ? c.text : '[' + c.type + ']'))
                         .join('\n')
                     : ''
+              const target = this.editTargets.get(block.tool_use_id)
+              let fileAfter: string | undefined
+              if (target) {
+                this.editTargets.delete(block.tool_use_id)
+                fileAfter = snapshot(target)
+              }
               this.emit({
                 kind: 'tool_result',
                 id: block.tool_use_id,
                 result: text,
-                isError: block.is_error === true
+                isError: block.is_error === true,
+                fileAfter
               })
             }
           }

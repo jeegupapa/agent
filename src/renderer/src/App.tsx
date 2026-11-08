@@ -209,7 +209,10 @@ export default function App() {
         break
       case 'tool_start':
         setToolCalls((prev) => [...prev, ev.call])
-        setItems((prev) => [...prev, { id: ev.call.id, type: 'tool', callId: ev.call.id }])
+        // 서브에이전트 안의 도구는 채팅에는 따로 안 띄우고(부모 Agent 칩에 개수로 표시) 도구 로그 트리에만 넣는다
+        if (!ev.call.parentId) {
+          setItems((prev) => [...prev, { id: ev.call.id, type: 'tool', callId: ev.call.id }])
+        }
         if (isEditTool(ev.call.name)) {
           setSelectedTool(ev.call.id)
           setRightTab('diff')
@@ -224,6 +227,7 @@ export default function App() {
                   status: ev.isError ? 'error' : 'done',
                   result: ev.result,
                   isError: ev.isError,
+                  fileAfter: ev.fileAfter,
                   finishedAt: Date.now()
                 }
               : c
