@@ -17,6 +17,10 @@ function friendlyError(err: unknown): string {
     return 'GitHub 에서 Release 를 읽지 못했습니다 (' + (/\b(\d{3})\b/.exec(first)?.[1] ?? '오류') +
       '). 저장소가 비공개이면 설정 → 업데이트 → "GitHub 토큰" 에 저장소 읽기 권한이 있는 토큰을 넣거나, 저장소를 공개로 바꾸세요. Release 가 아직 없을 때도 같은 오류가 납니다.'
   }
+  if (/github\.com|releases\.atom|api\.github\.com/.test(raw) && /\b(5\d\d)\b/.test(first)) {
+    return 'GitHub 서버가 일시적으로 응답하지 않습니다 (' + (/\b(5\d\d)\b/.exec(first)?.[1] ?? '5xx') +
+      '). 설정 문제가 아니라 GitHub 쪽 장애이므로 잠시 후 "지금 확인"을 다시 눌러 주세요. 자동 확인은 4시간마다 다시 시도합니다.'
+  }
   if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|net::ERR/.test(raw)) {
     return '업데이트 서버에 연결하지 못했습니다. 네트워크와 배포 위치를 확인하세요. (' + first.slice(0, 120) + ')'
   }
