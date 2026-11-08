@@ -2,8 +2,11 @@
 # 설치된 앱(electron-updater, provider: github)이 이 Release 를 보고 자동 업데이트한다.
 #
 # 배포 순서:
-#   1. package.json 의 version 을 올린다 (예: 0.3.0)
-#   2. git commit && git tag v0.3.0 && git push && git push --tags
+#   1. package.json 의 version 을 올린다 (예: npm version 0.3.0 --no-git-tag-version)
+#   2. git commit -am "v0.3.0" && git tag v0.3.0 && git push && git push --tags
+#
+# electron-builder 의 GitHub 퍼블리셔는 파일을 병렬로 올리다 draft 를 두 개 만드는 경우가 있어
+# 빌드만 하고(--publish never) 업로드는 action-gh-release 로 한 번에 한다.
 name: Release
 
 on:
@@ -42,10 +45,26 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build and publish installer
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-vite build && npx electron-builder --win --publish always
+      - name: Build installer
+        run: npx electron-vite build && npx electron-builder --win --publish never
+
+      - name: List build output
+        shell: bash
+        run: ls -la release
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
 
       - name: Upload build artifacts (for workflow_dispatch runs)
         if: "!startsWith(github.ref, 'refs/tags/v')"
