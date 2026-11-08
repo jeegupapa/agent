@@ -11,7 +11,7 @@ const MODES: { value: PermissionMode; label: string; desc: string }[] = [
 ]
 
 const COLORS = ['#5b8def', '#4caf7d', '#e3b341', '#c678dd', '#e5534b', '#2bb3c0', '#d97757', '#8b93a5']
-const EMOJIS = ['🎨', '🛠️', '🔍', '📝', '🧐', '🧪', '📊', '🤖', '🧭', '🔐', '🚀', '🧩']
+const EMOJIS = ['🎨', '🛠️', '🔍', '📝', '🧐', '🧪', '📊', '🤖', '🧭', '🧩', '📐', '🔐', '🚀']
 
 export function EmployeeForm(p: {
   initial?: Employee
