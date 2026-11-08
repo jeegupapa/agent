@@ -47,8 +47,11 @@ jobs:
 
       - name: Build installer
         shell: bash
-        # electron-builder downloads NSIS/winCodeSign from GitHub Releases, which occasionally returns 504.
-        # Retry a few times before giving up.
+        # electron-builder downloads Electron and NSIS/winCodeSign from GitHub Releases, which can return 504
+        # for hours at a time. Pull them from the npmmirror mirror instead, and retry a few times before giving up.
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
         run: |
           npx electron-vite build
           for attempt in 1 2 3 4; do
