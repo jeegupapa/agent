@@ -1,13 +1,7 @@
 import { useState } from 'react'
 import { EMPLOYEE_PRESETS, type Employee, type PermissionMode, type TeamTask } from '../../../shared/types'
 
-const MODELS = [
-  { value: '', label: '기본 모델 (설정값)' },
-  { value: 'claude-fable-5-1', label: 'Fable 5.1 (가장 똑똑함)' },
-  { value: 'claude-opus-5-5', label: 'Opus 5.5' },
-  { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5 (빠름·저렴)' },
-  { value: 'claude-haiku-5-5', label: 'Haiku 5.5' }
-]
+import { MODELS } from '../models'
 
 const MODES: { value: PermissionMode; label: string; desc: string }[] = [
   { value: 'acceptEdits', label: '편집 자동 승인', desc: '파일 편집은 알아서, 명령 실행은 물어봄 (권장)' },
@@ -126,11 +120,11 @@ export function EmployeeForm(p: {
           <h4>실행 설정</h4>
           <div className="row">
             <label className="field">
-              <span>모델</span>
+              <span>이 직원이 쓸 모델</span>
               <select className="text" value={draft.model ?? ''} onChange={(e) => set({ model: e.target.value || undefined })}>
                 {MODELS.map((m) => (
                   <option key={m.value} value={m.value}>
-                    {m.label}
+                    {m.value ? m.label : '기본 모델 (사이드바 설정값)'}
                   </option>
                 ))}
               </select>

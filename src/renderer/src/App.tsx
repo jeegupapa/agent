@@ -555,6 +555,11 @@ export default function App() {
   const saveApiKey = async (key: string | null): Promise<void> => {
     setConfig(await window.api.setApiKey(key))
   }
+  const changeModel = async (model: string | undefined): Promise<void> => {
+    if (!config) return
+    const { hasApiKey: _a, apiKeyHint: _b, hasUpdateToken: _c, ...plain } = config
+    await saveConfig({ ...plain, model })
+  }
 
   return (
     <div className="app" style={{ gridTemplateColumns: gridColumns }}>
@@ -585,6 +590,7 @@ export default function App() {
         onPickFolder={pickFolder}
         onNewSession={newSession}
         onPermissionModeChange={setPermissionMode}
+        onModelChange={changeModel}
         onOpenSettings={(tab) => setSettingsTab(tab)}
       />
       ) : (

@@ -11,6 +11,7 @@ import type {
 import type { PlanUsage } from '../App'
 import { UpdateBanner } from './UpdatePanel'
 import { SessionHistory, type SyncState } from './FirebasePanel'
+import { MODELS } from '../models'
 import type { FbUser } from '../firebase'
 
 interface Props {
@@ -39,6 +40,8 @@ interface Props {
   onPickFolder: () => void
   onNewSession: () => void
   onPermissionModeChange: (mode: PermissionMode) => void
+  /** 기본 모델 변경 (설정에 저장) */
+  onModelChange: (model: string | undefined) => void
   onOpenSettings: (tab: 'auth' | 'mcp' | 'skills' | 'update' | 'firebase') => void
 }
 
@@ -164,9 +167,20 @@ function ConnectionView(p: Props) {
         <span>인증</span>
         <b title={authLive}>{authLabel}</b>
       </div>
-      <div className="conn-row">
+      <div className="conn-row" title={s?.model ? `현재 세션: ${s.model}` : '다음 요청부터 적용'}>
         <span>모델</span>
-        <b>{s?.model || cfg?.model || 'CLI 기본값'}</b>
+        <select
+          className="text inline"
+          value={cfg?.model ?? ''}
+          disabled={!cfg || p.running}
+          onChange={(e) => p.onModelChange(e.target.value || undefined)}
+        >
+          {MODELS.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="conn-row">
         <span>MCP 서버</span>

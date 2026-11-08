@@ -4,6 +4,7 @@ import { Markdown } from '../components/Markdown'
 import { ToolChip } from '../components/ToolChip'
 import { EmployeeForm, TaskForm } from './TeamForms'
 import { EMPTY_RUNTIME, STATUS_LABEL, isActive, type TaskRuntime } from './runtime'
+import { modelShort } from '../models'
 
 export interface TeamViewProps {
   employees: Employee[]
@@ -106,6 +107,9 @@ export function TeamView(p: TeamViewProps) {
                   <div className="emp-name">
                     <b>{e.name}</b>
                     <span className="muted small">{e.role}</span>
+                    <span className="emp-model" title={e.model || '사이드바의 기본 모델을 따름'}>
+                      {modelShort(e.model)}
+                    </span>
                   </div>
                   <button
                     className="ghost small-btn"

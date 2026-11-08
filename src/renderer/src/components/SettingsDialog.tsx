@@ -29,13 +29,7 @@ interface Props {
   onClose: () => void
 }
 
-const MODELS = [
-  { value: '', label: 'CLI 기본값' },
-  { value: 'claude-fable-5-1', label: 'Fable 5.1' },
-  { value: 'claude-opus-5-5', label: 'Opus 5.5' },
-  { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
-  { value: 'claude-haiku-5-5', label: 'Haiku 5.5' }
-]
+import { MODELS } from '../models'
 
 function stripView(v: AppConfigView): AppConfig {
   const { hasApiKey: _h, apiKeyHint: _k, ...rest } = v
