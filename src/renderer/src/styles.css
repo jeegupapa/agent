@@ -304,6 +304,9 @@ button.small-btn { padding: 3px 8px; font-size: 11px; margin-top: 6px; }
 button.small-btn.danger { margin-left: 4px; }
 
 .form { display: flex; flex-direction: column; gap: 10px; }
+/* 폼 내용이 모달 높이(70vh)를 넘으면 flex 자식이 눌린다 → textarea 가 한 줄로 찌그러지는 문제. 스크롤로 넘치게 둔다 */
+.form > * { flex-shrink: 0; }
+.form textarea.text { min-height: 120px; }
 .form h4 { margin: 10px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .form .mode { align-items: flex-start; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

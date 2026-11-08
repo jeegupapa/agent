@@ -111,7 +111,7 @@ export function EmployeeForm(p: {
           </div>
           <textarea
             className="text"
-            rows={7}
+            rows={Math.min(24, Math.max(7, draft.instructions.split('\n').length + 1))}
             value={draft.instructions}
             onChange={(e) => set({ instructions: e.target.value })}
             placeholder="당신은 … 입니다. 작업 전에 … 를 확인하고, … 는 하지 마세요."
