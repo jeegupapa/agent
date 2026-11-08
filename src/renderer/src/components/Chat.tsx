@@ -26,11 +26,13 @@ interface Props {
 export function Chat(p: Props) {
   const [draft, setDraft] = useState('')
   const [suggestIdx, setSuggestIdx] = useState(0)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // 메시지 목록 안에서만 스크롤한다. scrollIntoView 는 body 까지 끌어내려 사이드바·오른쪽 패널이 화면 밖으로 밀려났다.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = messagesRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }, [p.items, p.toolCalls])
 
   useEffect(() => {
@@ -63,7 +65,7 @@ export function Chat(p: Props) {
 
   return (
     <main className="chat">
-      <div className="messages">
+      <div className="messages" ref={messagesRef}>
         {p.items.length === 0 && (
           <div className="empty">
             <h2>무엇을 도와드릴까요?</h2>
@@ -112,7 +114,6 @@ export function Chat(p: Props) {
           }
         })}
         {p.running && p.status && <div className="status-line">{p.status}</div>}
-        <div ref={bottomRef} />
       </div>
 
       <div className="composer-wrap">
