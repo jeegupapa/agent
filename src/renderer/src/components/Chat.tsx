@@ -47,6 +47,17 @@ function fmtSize(n?: number): string {
   return `${(n / 1024 / 1024).toFixed(1)}MB`
 }
 
+/** 팀장 배분 요약: 길면 두 줄로 접고 누르면 펼친다 */
+function DispatchSummary({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const long = text.length > 140
+  return (
+    <div className={`tc-summary ${long && !open ? 'clamp' : ''}`} onClick={() => long && setOpen((v) => !v)} title={long && !open ? '눌러서 전체 보기' : undefined}>
+      {text}
+    </div>
+  )
+}
+
 function AttachChip(p: { a: Attachment; preview?: string; onRemove?: () => void }) {
   const isImage = p.a.mime?.startsWith('image/')
   return (
@@ -238,14 +249,14 @@ export function Chat(p: Props) {
               )
             case 'dispatch':
               return (
-                <div key={it.id} className="msg team">
+                <div key={it.id} className="msg teamcard">
                   <div className="team-card">
                     <div className="team-card-head">
                       <span className="tc-avatar lead">🧭</span>
                       <b>팀장 배분</b>
                       <span className="muted small">작업 {it.taskIds.length}건</span>
                     </div>
-                    {it.summary && <div className="tc-summary">{it.summary}</div>}
+                    {it.summary && <DispatchSummary text={it.summary} />}
                     <ul className="dispatch-list">
                       {it.taskIds.map((id) => {
                         const t = taskById(id)
@@ -415,6 +426,18 @@ export function Chat(p: Props) {
   )
 }
 
+/** 보고서에서 "한 일" 문장만 뽑아 한두 줄 요약으로 만든다. 없으면 첫 문단 */
+function reportSummary(report: string | undefined): string {
+  if (!report) return ''
+  const m = /\*\*한 일\*\*\s*[:：]?\s*([\s\S]*?)(?=\n\s*\*\*|\n\s*##|$)/.exec(report)
+  let text = (m ? m[1] : report.replace(/^##\s*보고\s*/m, ''))
+    .replace(/[*_`#>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (text.length > 220) text = text.slice(0, 220) + '…'
+  return text || '보고서 보기'
+}
+
 /** 채팅에 올라온 직원 보고서. 최신 라운드일 때만 승인·수정 요청 버튼을 보여준다 */
 function ReportCard(p: {
   item: Extract<ChatItem, { type: 'report' }>
@@ -425,13 +448,16 @@ function ReportCard(p: {
 }) {
   const [asking, setAsking] = useState(false)
   const [comment, setComment] = useState('')
+  const [expanded, setExpanded] = useState(false)
   const t = p.task
   const e = p.employee
   const latest = !!t && t.round === p.item.round
   const canReview = latest && t.status === 'needs_review'
   const label = t ? STATUS_LABEL[t.status] : '삭제됨'
+  // 기본은 접힌 상태: "한 일" 한 줄만 보여 주고, 펼치면 전체 보고서
+  const summary = reportSummary(p.item.report)
   return (
-    <div className="msg team">
+    <div className="msg teamcard">
       <div className="team-card report">
         <div className="team-card-head">
           <span className="tc-avatar" style={{ background: e?.color }}>
@@ -447,9 +473,15 @@ function ReportCard(p: {
         </div>
         {p.item.error && <div className="notice error">{p.item.error}</div>}
         {p.item.report ? (
-          <div className="md tc-report">
-            <Markdown text={p.item.report} />
-          </div>
+          expanded ? (
+            <div className="md tc-report">
+              <Markdown text={p.item.report} />
+            </div>
+          ) : (
+            <div className="tc-summary" onClick={() => setExpanded(true)} title="눌러서 전체 보고서 보기">
+              {summary}
+            </div>
+          )
         ) : (
           !p.item.error && <div className="muted small">보고서 없이 끝났습니다. 작업 로그를 확인해 보세요.</div>
         )}
@@ -491,6 +523,11 @@ function ReportCard(p: {
                 ✓ 승인
               </button>
               <button onClick={() => setAsking(true)}>수정 요청</button>
+              {p.item.report && (
+                <button className="ghost-btn" onClick={() => setExpanded((v) => !v)}>
+                  {expanded ? '접기' : '전체 보고서'}
+                </button>
+              )}
               <button className="ghost-btn" onClick={() => p.onOpen(t.id)}>
                 팀에서 보기 →
               </button>
@@ -498,6 +535,11 @@ function ReportCard(p: {
           ))}
         {!canReview && t && (
           <div className="row tc-actions">
+            {p.item.report && (
+              <button className="ghost-btn" onClick={() => setExpanded((v) => !v)}>
+                {expanded ? '접기' : '전체 보고서'}
+              </button>
+            )}
             <button className="ghost-btn" onClick={() => p.onOpen(t.id)}>
               팀에서 보기 →
             </button>

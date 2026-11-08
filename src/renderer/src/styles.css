@@ -566,7 +566,7 @@ body.resizing * { cursor: col-resize !important; }
 .team-toggle .knob::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: left 0.15s, background 0.15s; }
 .team-toggle.on .knob { background: var(--accent); border-color: var(--accent); }
 .team-toggle.on .knob::after { left: 14px; background: #fff; }
-.msg.team { justify-content: flex-start; }
+.msg.teamcard { justify-content: flex-start; }
 .team-card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; max-width: 92%; min-width: 320px; display: flex; flex-direction: column; gap: 8px; }
 .team-card.report { border-left: 3px solid var(--accent); }
 .team-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
@@ -642,3 +642,14 @@ button.attach-btn:hover { color: var(--text); border-color: var(--accent); }
 .msg.user .bubble .attach-chip { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.3); color: #fff; }
 .msg.user .bubble .attach-chip .attach-size { color: rgba(255,255,255,0.7); }
 .msg.user .bubble .attach-chip img { width: 72px; height: 72px; }
+
+/* 팀 카드: 보고서는 접힌 요약이 기본, 배분 요약은 두 줄까지 */
+.tc-summary { font-size: 13px; line-height: 1.5; color: var(--text); cursor: default; }
+.tc-summary.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.team-card.report .tc-summary { cursor: pointer; color: var(--text); }
+.team-card.report .tc-summary:hover { color: var(--accent-2); }
+.team-card { padding: 9px 12px; gap: 7px; }
+/* 모달 안의 긴 명령/코드가 모달 폭을 밀어내 버튼이 잘리지 않게 */
+.modal > * { min-width: 0; max-width: 100%; }
+.modal pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+.modal-actions { flex-wrap: wrap; }
