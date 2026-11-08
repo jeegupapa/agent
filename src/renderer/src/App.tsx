@@ -723,13 +723,11 @@ export default function App() {
         >
           {layout.sidebarOpen ? '◀' : '☰'}
         </button>
-        <button
-          className={`panel-toggle right ${layout.rightOpen ? '' : 'closed'}`}
-          title={layout.rightOpen ? '도구 패널 숨기기 (Ctrl+J)' : '도구 패널 보이기 (Ctrl+J)'}
-          onClick={toggleRight}
-        >
-          {layout.rightOpen ? '▶' : `🔧${toolCalls.length ? ` ${toolCalls.length}` : ''}`}
-        </button>
+        {!layout.rightOpen && (
+          <button className="panel-toggle right closed" title="도구 패널 보이기 (Ctrl+J)" onClick={toggleRight}>
+            {`🔧${panelCalls.length ? ` ${panelCalls.length}` : ''}`}
+          </button>
+        )}
       {mode === 'team' ? (
         <TeamView
           employees={team.employees}
@@ -793,6 +791,9 @@ export default function App() {
       {layout.rightOpen ? (
       <aside className="right">
         <div className="tabs">
+          <button className="panel-toggle inline" title="도구 패널 숨기기 (Ctrl+J)" onClick={toggleRight}>
+            ▶
+          </button>
           <button className={rightTab === 'tools' ? 'active' : ''} onClick={() => setRightTab('tools')}>
             도구 호출 ({panelCalls.length})
           </button>

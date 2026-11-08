@@ -489,6 +489,9 @@ body.resizing * { cursor: col-resize !important; }
 .panel-toggle.closed { opacity: 0.9; width: auto; padding: 0 8px; }
 .panel-toggle.left { left: 8px; }
 .panel-toggle.right { right: 8px; }
+/* 열려 있을 때의 닫기 버튼은 도구 패널 탭 줄 왼쪽에 들어간다 (떠 있으면 팀 화면의 "+ 작업 지시" 와 겹침) */
+.tabs button.panel-toggle.inline { position: static; flex: 0 0 auto; width: 28px; height: 28px; margin: 6px 4px 6px 8px; padding: 0; border: 1px solid var(--border); border-radius: 6px; opacity: 0.8; }
+.tabs button.panel-toggle.inline:hover { opacity: 1; }
 
 /* ---------- Mode switch (chat / team) ---------- */
 .mode-switch { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
@@ -500,7 +503,8 @@ body.resizing * { cursor: col-resize !important; }
 
 /* ---------- Team view ---------- */
 .team { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.team-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px 10px 48px; border-bottom: 1px solid var(--border); }
+/* 좌우 패딩은 떠 있는 패널 토글 버튼(사이드바 ◀ / 도구 패널 🔧) 자리 */
+.team-head { display: flex; align-items: center; gap: 10px; padding: 10px 72px 10px 48px; border-bottom: 1px solid var(--border); }
 .team-head h2 { margin: 0; font-size: 15px; display: flex; align-items: baseline; gap: 10px; }
 .team-head .spacer, .task-actions .spacer, .diff-head .spacer { flex: 1; }
 .team-body { flex: 1; min-height: 0; display: flex; }
@@ -549,7 +553,6 @@ body.resizing * { cursor: col-resize !important; }
 .emp-pick { display: flex; flex-wrap: wrap; gap: 6px; }
 .emp-chip { padding: 5px 10px; border-radius: 16px; font-size: 12px; }
 .emp-chip.active { background: var(--bg-3); color: var(--text); }
-.team-delete-emp { position: fixed; left: 50%; bottom: 7vh; transform: translateX(calc(-50% - 300px)); z-index: 11; }
 
 /* ----- 채팅 ↔ 팀 연동: 팀에게 맡기기 토글, 배분 카드, 보고 카드 ----- */
 .composer-bar { display: flex; align-items: center; gap: 10px; padding: 0 2px 6px; flex-wrap: wrap; }

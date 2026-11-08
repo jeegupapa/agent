@@ -228,21 +228,15 @@ export function TeamView(p: TeamViewProps) {
             setShowEmployeeForm(false)
           }}
           onCancel={() => setShowEmployeeForm(false)}
+          onDelete={
+            showEmployeeForm === 'new'
+              ? undefined
+              : () => {
+                  p.onDeleteEmployee(showEmployeeForm.id)
+                  setShowEmployeeForm(false)
+                }
+          }
         />
-      )}
-      {showEmployeeForm && showEmployeeForm !== 'new' && (
-        <button
-          className="danger team-delete-emp"
-          onClick={() => {
-            const e = showEmployeeForm
-            if (confirm(`${e.name}(${e.role}) 직원을 삭제할까요? 작업 기록은 남습니다.`)) {
-              p.onDeleteEmployee(e.id)
-              setShowEmployeeForm(false)
-            }
-          }}
-        >
-          직원 삭제
-        </button>
       )}
       {showTaskForm && (
         <TaskForm

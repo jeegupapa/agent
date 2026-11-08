@@ -17,6 +17,8 @@ export function EmployeeForm(p: {
   initial?: Employee
   onSave: (e: Employee) => void
   onCancel: () => void
+  /** 편집 중인 직원 삭제 (새 직원 폼에는 없음) */
+  onDelete?: () => void
 }) {
   const now = Date.now()
   const [draft, setDraft] = useState<Employee>(
@@ -166,7 +168,19 @@ export function EmployeeForm(p: {
           </div>
         </div>
         <div className="modal-actions settings-foot">
-          <span className="muted small">{valid ? '' : '이름, 직함, 지시문은 필수입니다.'}</span>
+          <span className="row">
+            {p.initial && p.onDelete && (
+              <button
+                className="danger"
+                onClick={() => {
+                  if (confirm(`${draft.name}(${draft.role}) 직원을 삭제할까요? 작업 기록은 남습니다.`)) p.onDelete!()
+                }}
+              >
+                직원 삭제
+              </button>
+            )}
+            <span className="muted small">{valid ? '' : '이름, 직함, 지시문은 필수입니다.'}</span>
+          </span>
           <span className="row">
             <button onClick={p.onCancel}>취소</button>
             <button className="primary" disabled={!valid} onClick={() => p.onSave({ ...draft, updatedAt: Date.now() })}>

@@ -202,9 +202,16 @@ function ConnectionView(p: Props) {
           ))}
         </div>
       )}
-      <div className="conn-row">
+      <div
+        className="conn-row"
+        title={
+          s
+            ? `세션이 알려준 값입니다.\n스킬(${skillCount}): ${s.skills.join(', ') || '없음'}\n슬래시 명령(${s.slashCommands.length}, 입력창에 / 로 선택): ${s.slashCommands.join(', ') || '없음'}`
+            : '설치된 스킬 수 / 쓸 수 있는 슬래시 명령 수. Claude Code 세션이 시작된 뒤(첫 메시지 이후) 세션이 알려줍니다.'
+        }
+      >
         <span>스킬 / 명령</span>
-        <b>{s ? `${skillCount}개 / ${s.slashCommands.length}개` : '-'}</b>
+        <b>{s ? `${skillCount}개 / ${s.slashCommands.length}개` : <span className="muted">세션 시작 후 표시</span>}</b>
       </div>
       <div className="row">
         <button className="small-btn" onClick={() => p.onOpenSettings('auth')}>
