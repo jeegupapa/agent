@@ -234,8 +234,8 @@ export const DEFAULT_UPDATE_CONFIG: UpdateConfig = {
   autoCheck: true,
   autoDownload: true,
   installOnQuit: true,
-  provider: 'generic',
-  url: ''
+  // owner/repo 를 비우면 빌드에 포함된 기본 배포 위치(package.json build.publish)를 쓴다
+  provider: 'github'
 }
 
 /**

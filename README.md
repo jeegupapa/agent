@@ -78,6 +78,11 @@ electron-updater 로 앱 자체를 자동 업데이트합니다. 기본 배포 �
   `%APPDATA%\claude-cli-studio\ghtoken.bin` 에 저장되고, electron-updater 가 GitHub API 로 Release 를 읽어 받습니다.
   PC 마다 한 번씩 넣어야 합니다.
 
+### 설치 파일 이름에 공백이 없어야 하는 이유
+GitHub 는 첨부 파일 이름의 공백을 점으로 바꿔 저장하지만 electron-builder 의 `latest.yml` 은 하이픈으로 바꿔 적기 때문에,
+`Claude CLI Studio-Setup-x.y.z.exe` 처럼 공백이 있으면 설치된 앱이 파일을 찾지 못해 404 가 납니다.
+그래서 `artifactName` 을 `Claude-CLI-Studio-Setup-${version}.${ext}` 로 고정했습니다.
+
 ### 새 버전 배포
 ```bash
 # 1. package.json 의 version 을 올린다 (예: 0.3.0)

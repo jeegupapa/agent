@@ -1,6 +1,6 @@
 {
   "name": "claude-cli-studio",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Electron + React desktop UI for Claude Code (Agent SDK)",
   "repository": "github:jeegupapa/agent",
   "main": "./out/main/index.js",
@@ -48,7 +48,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Claude CLI Studio",
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "Claude-CLI-Studio-Setup-${version}.${ext}"
     }
   },
   "dependencies": {
