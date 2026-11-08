@@ -108,6 +108,18 @@ function barClass(w: PlanWindow): string {
   return 'plan-fill'
 }
 
+const MCP_STATUS_LABEL: Record<string, string> = {
+  'needs-auth': '인증 필요',
+  failed: '실패',
+  pending: '연결 중',
+  connecting: '연결 중',
+  disabled: '꺼짐'
+}
+const MCP_STATUS_HINT: Record<string, string> = {
+  'needs-auth': '터미널에서 claude 를 실행한 뒤 /mcp 에서 이 서버를 골라 로그인하면 연결됩니다.',
+  failed: '서버 주소가 비었거나 응답하지 않습니다. 플러그인/설정의 정의를 확인하세요.'
+}
+
 /** 구독 종류 코드 → 표시 이름 */
 export function planName(sub: string): string {
   const map: Record<string, string> = { max: 'Max 플랜', pro: 'Pro 플랜', team: 'Team 플랜', enterprise: 'Enterprise 플랜', free: '무료' }
@@ -203,6 +215,11 @@ function ConnectionView(p: Props) {
   const mcpList = s?.mcpServers ?? []
   const skillCount = s?.skills.length ?? 0
   const connected = mcpList.filter((m) => m.status === 'connected').length
+  const needsAuth = mcpList.filter((m) => m.status === 'needs-auth').length
+  const pendingMcp = mcpList.filter((m) => m.status === 'pending' || m.status === 'connecting').length
+  const failed = mcpList.length - connected - needsAuth - pendingMcp
+  // 연결된 서버만 보여 주고, 나머지(인증 필요·실패)는 접어 둔다
+  const [showAllMcp, setShowAllMcp] = useState(false)
 
   return (
     <div className="conn">
@@ -234,15 +251,39 @@ function ConnectionView(p: Props) {
       </div>
       {mcpList.length > 0 && (
         <div className="conn-mcp">
-          {mcpList.map((m) => (
-            <div key={m.name} title={m.source ?? ''}>
-              <span>
-                <i className={m.status === 'connected' ? 'dot-ok' : 'dot-err'} />
-                {m.name}
-              </span>
-              <span className="muted">{m.status}</span>
+          {mcpList
+            .filter((m) => m.status === 'connected')
+            .map((m) => (
+              <div key={m.name} title={m.source ?? ''}>
+                <span>
+                  <i className="dot-ok" />
+                  {m.name.replace(/^plugin:[^:]+:/, '')}
+                </span>
+                <span className="muted">{m.source === 'claudeai' ? 'claude.ai' : m.source?.startsWith('plugin') ? '플러그인' : ''}</span>
+              </div>
+            ))}
+          {mcpList.length - connected > 0 && (
+            <div className="conn-mcp-more">
+              <button className="ghost small-btn" onClick={() => setShowAllMcp((v) => !v)}>
+                {showAllMcp ? '▾' : '▸'} 미연결 {mcpList.length - connected}개
+                {needsAuth ? ` · 인증 필요 ${needsAuth}` : ''}
+                {pendingMcp ? ` · 연결 중 ${pendingMcp}` : ''}
+                {failed > 0 ? ` · 실패 ${failed}` : ''}
+              </button>
+              {showAllMcp &&
+                mcpList
+                  .filter((m) => m.status !== 'connected')
+                  .map((m) => (
+                    <div key={m.name} title={`${m.source ?? ''}\n${MCP_STATUS_HINT[m.status] ?? ''}`}>
+                      <span>
+                        <i className="dot-err" />
+                        {m.name.replace(/^plugin:[^:]+:/, '')}
+                      </span>
+                      <span className="muted">{MCP_STATUS_LABEL[m.status] ?? m.status}</span>
+                    </div>
+                  ))}
             </div>
-          ))}
+          )}
         </div>
       )}
       <div
