@@ -740,3 +740,5 @@ pre.fs-text { margin: 0; padding: 0; background: transparent; border: none; max-
 .term-stale-text b { color: var(--text); font-weight: 600; }
 button.pbtn.accent { color: var(--warn); border-color: rgba(227, 179, 65, 0.45); }
 button.pbtn.accent:hover:not(:disabled) { color: var(--text); background: rgba(227, 179, 65, 0.18); border-color: var(--warn); }
+
+.perm-missing { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -204,6 +204,8 @@ export interface TeamTask {
   round: number
   /** 채팅창 요청을 팀장이 배분해 만든 작업이면 그 요청 id. 보고가 채팅으로 돌아간다 */
   origin?: { kind: 'chat'; requestId: string }
+  /** 이 작업을 실행한 PC 이름. 작업 목록은 계정으로 동기화되지만 실행과 권한 승인은 그 PC 에서만 할 수 있다 */
+  runHost?: string
 }
 
 /** 메인 프로세스 → 렌더러: 팀 작업 이벤트 (ClaudeEvent 에 taskId 를 붙인 것) */

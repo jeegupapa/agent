@@ -15,6 +15,11 @@ export interface TeamViewProps {
   defaultCwd: string
   backend: 'firestore' | 'local'
   storeError?: string
+  /** 이 PC 이름 (다른 PC 에서 실행한 작업을 구분) */
+  hostname: string
+  /** 이 창의 팝업 대기열에 권한 요청이 있는 작업 id */
+  pendingTaskIds: string[]
+  onRecheckPermissions: () => void
   onSelectTask: (id: string | null) => void
   onSaveEmployee: (e: Employee) => void
   onDeleteEmployee: (id: string) => void
@@ -210,6 +215,9 @@ export function TeamView(p: TeamViewProps) {
               task={selected}
               employee={empById.get(selected.employeeId)}
               runtime={p.runtime[selected.id] ?? EMPTY_RUNTIME}
+              permissionPending={p.pendingTaskIds.includes(selected.id)}
+              elsewhere={selected.runHost && p.hostname && selected.runHost !== p.hostname ? selected.runHost : undefined}
+              onRecheckPermissions={p.onRecheckPermissions}
               onStop={() => p.onStopTask(selected.id)}
               onRerun={() => p.onRerunTask(selected)}
               onDelete={() => {
@@ -265,6 +273,11 @@ function TaskDetail(p: {
   task: TeamTask
   employee?: Employee
   runtime: TaskRuntime
+  /** 이 창의 팝업 대기열에 이 작업의 권한 요청이 있는지 */
+  permissionPending: boolean
+  /** 다른 PC 에서 실행한 작업이면 그 PC 이름 */
+  elsewhere?: string
+  onRecheckPermissions: () => void
   onStop: () => void
   onRerun: () => void
   onDelete: () => void
@@ -317,7 +330,20 @@ function TaskDetail(p: {
         {t.progress.numTurns !== undefined && <span>턴 {t.progress.numTurns}</span>}
         {t.progress.totalTokens !== undefined && <span>토큰 {(t.progress.totalTokens / 1000).toFixed(1)}k</span>}
         {active && t.progress.lastTool && <span className="warn">지금 {t.progress.lastTool} 실행 중</span>}
-        {t.status === 'waiting_permission' && <span className="danger">권한 승인을 기다리는 중 (팝업 확인)</span>}
+        {active && p.elsewhere && t.status !== 'waiting_permission' && <span>실행 위치 {p.elsewhere}</span>}
+        {t.status === 'waiting_permission' &&
+          (p.permissionPending ? (
+            <span className="danger">권한 승인을 기다리는 중 (팝업 확인)</span>
+          ) : p.elsewhere ? (
+            <span className="danger">{p.elsewhere} 에서 권한 승인을 기다리는 중입니다. 그 PC 의 앱에서 승인하세요.</span>
+          ) : (
+            <span className="danger perm-missing">
+              권한 승인을 기다리는데 이 창에 팝업이 없습니다. 다른 창에서 실행한 작업이면 그 창에서 승인하세요.
+              <button className="pbtn" onClick={p.onRecheckPermissions}>
+                팝업 다시 불러오기
+              </button>
+            </span>
+          ))}
       </div>
 
       <div className="tabs">

@@ -110,11 +110,13 @@ export function deriveTaskPatch(task: TeamTask, ev: ClaudeEvent, rt: TaskRuntime
       return { progress: { ...task.progress, lastText: ev.text.slice(-240), updatedAt: now } }
     case 'result': {
       const report = extractReport(rt.lastAssistantText)
+      // 사용자가 중단한 작업은 뒤따라 오는 종료 이벤트 때문에 "실패"로 바뀌지 않게 한다
+      const stopped = task.status === 'stopped'
       return {
-        status: ev.isError ? 'failed' : 'needs_review',
+        status: stopped ? 'stopped' : ev.isError ? 'failed' : 'needs_review',
         finishedAt: now,
         sessionId: ev.sessionId,
-        error: ev.isError ? (ev.errorText ?? '실행 오류') : undefined,
+        error: ev.isError && !stopped ? (ev.errorText ?? '실행 오류') : undefined,
         report: ev.isError ? task.report : report || task.report,
         progress: {
           ...task.progress,
@@ -126,6 +128,7 @@ export function deriveTaskPatch(task: TeamTask, ev: ClaudeEvent, rt: TaskRuntime
       }
     }
     case 'error':
+      if (task.status === 'stopped') return null
       return { status: 'failed', finishedAt: now, error: ev.message }
     default:
       return null

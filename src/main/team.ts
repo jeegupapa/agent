@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron'
-import { ClaudeRunner, type RunnerSink } from './claude'
+import { ClaudeRunner, drawAttention, type RunnerSink } from './claude'
 import {
   EMPLOYEE_PRESETS,
   DISPATCH_TASK_ID,
@@ -10,6 +10,7 @@ import {
   type DispatchAssignment,
   type DispatchPlan,
   type PermissionAnswer,
+  type PermissionRequest,
   type TeamStartArgs
 } from '../shared/types'
 
@@ -68,6 +69,11 @@ export class TeamRunner {
     return this.dispatching > 0
   }
 
+  /** 직원 작업들이 답을 기다리는 권한 요청 (taskId 포함) */
+  get pendingRequests(): PermissionRequest[] {
+    return [...this.runners].flatMap(([taskId, r]) => r.pendingRequests.map((req) => ({ ...req, taskId })))
+  }
+
   /** 직원 지시문 + 공통 보고 규칙 */
   static systemPrompt(args: TeamStartArgs): string {
     const e = args.employee
@@ -95,7 +101,12 @@ export class TeamRunner {
         if (!this.win.isDestroyed()) this.win.webContents.send('team:event', { taskId, event })
       },
       requestPermission: (req) => {
-        if (!this.win.isDestroyed()) this.win.webContents.send('claude:permission', { ...req, taskId })
+        if (this.win.isDestroyed()) return
+        this.win.webContents.send('claude:permission', { ...req, taskId })
+        drawAttention(this.win)
+      },
+      permissionClosed: (requestId) => {
+        if (!this.win.isDestroyed()) this.win.webContents.send('claude:permission-closed', requestId)
       }
     }
     const runner = new ClaudeRunner(this.win, this.getConfig, sink)

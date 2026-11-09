@@ -41,6 +41,14 @@ const api = {
     ipcRenderer.on('claude:permission', handler)
     return () => ipcRenderer.removeListener('claude:permission', handler)
   },
+  /** 메인 프로세스가 아직 답을 기다리는 권한 요청 (화면이 다시 로드된 뒤 팝업 복구용) */
+  pendingPermissions: (): Promise<PermissionRequest[]> => ipcRenderer.invoke('claude:pending-permissions'),
+  /** 답하기 전에 취소된 요청 (작업 중단 등) */
+  onPermissionClosed: (cb: (requestId: string) => void): (() => void) => {
+    const handler = (_: unknown, requestId: string): void => cb(requestId)
+    ipcRenderer.on('claude:permission-closed', handler)
+    return () => ipcRenderer.removeListener('claude:permission-closed', handler)
+  },
 
   // 폴더 / 앱
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-folder'),

@@ -90,6 +90,17 @@ export function buildEnv(config: AppConfig, apiKey: string | null): Record<strin
 export interface RunnerSink {
   emit(event: ClaudeEvent): void
   requestPermission(req: PermissionRequest): void
+  /** 답을 받기 전에 요청이 취소됐다 (작업 중단 등). 화면의 팝업을 치우라는 신호 */
+  permissionClosed?(requestId: string): void
+}
+
+/** 권한 요청이 왔는데 창이 뒤에 있으면 작업 표시줄에서 깜빡여 알린다 */
+export function drawAttention(win: BrowserWindow): void {
+  if (win.isDestroyed() || win.isFocused()) return
+  win.flashFrame(true)
+  win.once('focus', () => {
+    if (!win.isDestroyed()) win.flashFrame(false)
+  })
 }
 
 export function windowSink(win: BrowserWindow): RunnerSink {
@@ -98,7 +109,12 @@ export function windowSink(win: BrowserWindow): RunnerSink {
       if (!win.isDestroyed()) win.webContents.send('claude:event', event)
     },
     requestPermission: (req) => {
-      if (!win.isDestroyed()) win.webContents.send('claude:permission', req)
+      if (win.isDestroyed()) return
+      win.webContents.send('claude:permission', req)
+      drawAttention(win)
+    },
+    permissionClosed: (requestId) => {
+      if (!win.isDestroyed()) win.webContents.send('claude:permission-closed', requestId)
     }
   }
 }
@@ -111,7 +127,8 @@ export function windowSink(win: BrowserWindow): RunnerSink {
  */
 export class ClaudeRunner {
   private current: Query | null = null
-  private pendingPermissions = new Map<string, (answer: PermissionAnswer) => void>()
+  /** 답을 기다리는 권한 요청. 화면이 다시 로드돼도 팝업을 복구할 수 있게 요청 내용까지 갖고 있는다 */
+  private pendingPermissions = new Map<string, { req: PermissionRequest; resolve: (answer: PermissionAnswer) => void }>()
   /** 실행 중인 Edit/Write 호출 id → 대상 파일 경로 (완료 후 스냅샷용) */
   private editTargets = new Map<string, string>()
   private cwd = ''
@@ -137,15 +154,20 @@ export class ClaudeRunner {
     return this.pendingPermissions.has(requestId)
   }
 
+  /** 아직 답을 받지 못한 권한 요청 목록 (요청 순) */
+  get pendingRequests(): PermissionRequest[] {
+    return [...this.pendingPermissions.values()].map((p) => p.req)
+  }
+
   private emit(event: ClaudeEvent): void {
     this.sink.emit(event)
   }
 
   answerPermission(answer: PermissionAnswer): void {
-    const resolve = this.pendingPermissions.get(answer.requestId)
-    if (resolve) {
+    const pending = this.pendingPermissions.get(answer.requestId)
+    if (pending) {
       this.pendingPermissions.delete(answer.requestId)
-      resolve(answer)
+      pending.resolve(answer)
     }
   }
 
@@ -185,13 +207,16 @@ export class ClaudeRunner {
       agentProgressSummaries: true,
       canUseTool: async (toolName, input, { signal, suggestions }): Promise<PermissionResult> => {
         const requestId = randomUUID()
+        const req: PermissionRequest = { requestId, toolName, input }
         const answer = await new Promise<PermissionAnswer>((resolve) => {
-          this.pendingPermissions.set(requestId, resolve)
+          this.pendingPermissions.set(requestId, { req, resolve })
           signal.addEventListener('abort', () => {
-            this.pendingPermissions.delete(requestId)
+            // 이미 답한 요청이면 건드리지 않는다
+            if (!this.pendingPermissions.delete(requestId)) return
             resolve({ requestId, allow: false })
+            this.sink.permissionClosed?.(requestId)
           })
-          this.sink.requestPermission({ requestId, toolName, input })
+          this.sink.requestPermission(req)
         })
         if (answer.allow) {
           return {
@@ -233,6 +258,12 @@ export class ClaudeRunner {
       this.emit({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
     } finally {
       this.current = null
+      // 실행이 끝났는데 남은 요청이 있으면 더는 답할 수 없으므로 정리한다
+      for (const [requestId, pending] of this.pendingPermissions) {
+        pending.resolve({ requestId, allow: false })
+        this.sink.permissionClosed?.(requestId)
+      }
+      this.pendingPermissions.clear()
     }
   }
 

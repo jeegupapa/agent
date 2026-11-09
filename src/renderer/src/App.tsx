@@ -90,6 +90,8 @@ export default function App() {
   // 권한 요청은 여러 작업에서 동시에 올 수 있어 큐로 둔다. 맨 앞 것을 보여준다
   const [permissions, setPermissions] = useState<PermissionRequest[]>([])
   const permission = permissions[0] ?? null
+  const permissionsRef = useRef(permissions)
+  permissionsRef.current = permissions
   const [mode, setMode] = useState<'chat' | 'team'>(() =>
     localStorage.getItem('claude-cli-studio.mode') === 'team' ? 'team' : 'chat'
   )
@@ -281,25 +283,60 @@ export default function App() {
     })
   }, [])
 
-  // 팀 작업의 권한 요청이 오면 그 작업을 "승인 필요" 로 표시
+  // 대기 중인 권한 요청이 있는 팀 작업은 "승인 필요" 로 표시
   useEffect(() => {
-    const p = permissions[permissions.length - 1]
-    if (p?.taskId) patchTaskRef.current(p.taskId, (t) => (isActive(t.status) ? { status: 'waiting_permission' } : {}))
-  }, [permissions])
+    const waiting = new Set(permissions.map((p) => p.taskId).filter((id): id is string => !!id))
+    for (const t of team.tasks) {
+      if (waiting.has(t.id) && isActive(t.status) && t.status !== 'waiting_permission') {
+        teamRef.current.upsertTask({ ...t, status: 'waiting_permission' })
+      }
+    }
+  }, [permissions, team.tasks])
+
+  /**
+   * 팝업 대기열을 메인 프로세스가 실제로 기다리는 요청 목록에 맞춘다. 대기열은 화면 쪽 메모리에만 있어서
+   * 화면이 다시 로드되면 사라지는데, 그러면 작업은 답을 기다리며 멈춰 있고 팝업은 보이지 않게 된다.
+   */
+  const syncPermissions = useCallback(async (): Promise<void> => {
+    const before = new Set(permissionsRef.current.map((p) => p.requestId))
+    const [pending, runningIds] = await Promise.all([window.api.pendingPermissions(), window.api.teamRunning()])
+    const alive = new Set(pending.map((p) => p.requestId))
+    setPermissions((q) => {
+      // 확인하는 사이에 새로 들어온 요청(before 에 없던 것)은 그대로 둔다
+      const kept = q.filter((p) => alive.has(p.requestId) || !before.has(p.requestId))
+      const have = new Set(kept.map((p) => p.requestId))
+      return [...kept, ...pending.filter((p) => !have.has(p.requestId))]
+    })
+    // 이 앱에서 돌고 있는데 기다리는 요청이 없으면 "승인 필요" 표시를 푼다
+    const waiting = new Set(pending.map((p) => p.taskId))
+    for (const t of teamRef.current.tasks) {
+      if (t.status === 'waiting_permission' && runningIds.includes(t.id) && !waiting.has(t.id)) {
+        teamRef.current.upsertTask({ ...t, status: 'running' })
+      }
+    }
+  }, [])
+
+  // 화면이 (다시) 로드되면 기다리던 권한 요청을 되살린다
+  useEffect(() => {
+    void syncPermissions()
+  }, [syncPermissions])
 
   // 앱을 다시 켰을 때 "작업 중"으로 남아 있는 작업은 실제로는 죽었으므로 중단 처리
   const reconciled = useRef(false)
   useEffect(() => {
     if (reconciled.current || team.tasks.length === 0) return
     reconciled.current = true
-    window.api.teamRunning().then((ids) => {
+    Promise.all([window.api.teamRunning(), window.api.hostname()]).then(([ids, host]) => {
       for (const t of teamRef.current.tasks) {
-        if (isActive(t.status) && !ids.includes(t.id)) {
-          teamRef.current.upsertTask({ ...t, status: 'stopped', finishedAt: Date.now(), error: t.error ?? '앱이 종료되어 작업이 중단되었습니다. "처음부터 다시 실행"으로 다시 맡길 수 있습니다.' })
-        }
+        if (!isActive(t.status) || ids.includes(t.id)) continue
+        // 다른 PC 에서 실행한 작업은 그 PC 에서 아직 돌고 있을 수 있으므로 건드리지 않는다
+        if (t.runHost && t.runHost !== host) continue
+        teamRef.current.upsertTask({ ...t, status: 'stopped', finishedAt: Date.now(), error: t.error ?? '앱이 종료되어 작업이 중단되었습니다. "처음부터 다시 실행"으로 다시 맡길 수 있습니다.' })
       }
+      // 작업 목록이 늦게 도착했을 수 있으므로 "승인 필요" 표시도 한 번 더 맞춘다
+      void syncPermissions()
     })
-  }, [team.tasks.length])
+  }, [team.tasks.length, syncPermissions])
 
   /**
    * 작업 시작. opts.stay 면 팀 화면으로 전환하지 않고(채팅에서 배분한 작업), opts.employee 로
@@ -315,7 +352,8 @@ export default function App() {
       finishedAt: undefined,
       error: undefined,
       sessionId: followUp ? task.sessionId : undefined,
-      progress: followUp ? { ...task.progress, lastTool: undefined } : { toolUses: 0 }
+      progress: followUp ? { ...task.progress, lastTool: undefined } : { toolUses: 0 },
+      runHost: hostname || task.runHost
     }
     team.upsertTask(started)
     const prevRt = followUp ? runtimeRef.current[task.id] ?? EMPTY_RUNTIME : EMPTY_RUNTIME
@@ -669,10 +707,22 @@ export default function App() {
 
   useEffect(() => {
     const offEvent = window.api.onEvent(handleEvent)
-    const offPerm = window.api.onPermission((req) => setPermissions((q) => [...q, req]))
+    const offPerm = window.api.onPermission((req) =>
+      setPermissions((q) => (q.some((p) => p.requestId === req.requestId) ? q : [...q, req]))
+    )
+    // 답하기 전에 취소된 요청(작업 중단 등)은 팝업에서 치우고, 그 작업의 "승인 필요" 표시도 푼다
+    const offClosed = window.api.onPermissionClosed((requestId) => {
+      const closed = permissionsRef.current.find((p) => p.requestId === requestId)
+      setPermissions((q) => q.filter((p) => p.requestId !== requestId))
+      const tid = closed?.taskId
+      if (!tid || permissionsRef.current.some((p) => p.taskId === tid && p.requestId !== requestId)) return
+      const t = teamRef.current.tasks.find((x) => x.id === tid)
+      if (t?.status === 'waiting_permission') teamRef.current.upsertTask({ ...t, status: 'running' })
+    })
     return () => {
       offEvent()
       offPerm()
+      offClosed()
     }
   }, [handleEvent])
 
@@ -902,6 +952,9 @@ export default function App() {
           defaultCwd={cwd}
           backend={team.backend}
           storeError={team.error}
+          hostname={hostname}
+          pendingTaskIds={permissions.map((p) => p.taskId).filter((id): id is string => !!id)}
+          onRecheckPermissions={() => void syncPermissions()}
           onSelectTask={(id) => {
             setSelectedTaskId(id)
             setSelectedTool(null)

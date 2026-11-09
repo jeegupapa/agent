@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell, type MenuItemConstructorOptions } from 'electron'
 import { execFile, spawn } from 'child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { homedir, hostname } from 'os'
@@ -22,6 +22,7 @@ import type {
   InstallResult,
   McpServerEntry,
   PermissionAnswer,
+  PermissionRequest,
   SendPromptArgs,
   SkillScope,
   TeamStartArgs
@@ -218,7 +219,36 @@ function activeWork(): ActiveWork {
   }
 }
 
+/**
+ * 기본 메뉴에는 새로고침(Ctrl+R)과 창 닫기(Ctrl+W)가 들어 있어 터미널에서 같은 키를 누르면 화면이 통째로
+ * 다시 로드되거나 닫힌다. 그러면 대화·팝업·터미널이 사라지므로 설치된 앱에서는 두 항목을 뺀 메뉴를 쓴다.
+ */
+function installMenu(): void {
+  const dev = !!process.env['ELECTRON_RENDERER_URL']
+  const view: MenuItemConstructorOptions[] = [
+    ...(dev ? ([{ role: 'reload' }, { role: 'forceReload' }] as MenuItemConstructorOptions[]) : []),
+    { role: 'toggleDevTools' },
+    { type: 'separator' },
+    { role: 'resetZoom' },
+    { role: 'zoomIn' },
+    { role: 'zoomOut' },
+    { type: 'separator' },
+    { role: 'togglefullscreen' }
+  ]
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: '편집',
+        submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }]
+      },
+      { label: '보기', submenu: view },
+      { label: '창', submenu: [{ role: 'minimize' }] }
+    ])
+  )
+}
+
 function createWindow(): void {
+  installMenu()
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -312,6 +342,11 @@ app.whenReady().then(() => {
     // 팀 작업의 요청이면 그쪽 러너가 받고, 아니면 메인 채팅 러너
     if (!team?.answerPermission(answer)) runner?.answerPermission(answer)
   })
+  // 답을 기다리는 권한 요청 전체. 화면이 다시 로드됐을 때 팝업을 복구하는 데 쓴다
+  ipcMain.handle('claude:pending-permissions', (): PermissionRequest[] => [
+    ...(runner?.pendingRequests ?? []),
+    ...(team?.pendingRequests ?? [])
+  ])
 
   // ----- 팀 (직원 에이전트) -----
   ipcMain.handle('team:start', async (_e, args: TeamStartArgs) => {
