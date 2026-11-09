@@ -346,6 +346,13 @@ app.whenReady().then(() => {
   ipcMain.handle('fs:read', (_e, p: string): FsRead => readForPreview(p))
   ipcMain.handle('fs:reveal', (_e, p: string) => shell.showItemInFolder(p))
   ipcMain.handle('fs:home', () => homedir())
+  ipcMain.handle('fs:is-dir', (_e, p: string) => {
+    try {
+      return statSync(p).isDirectory()
+    } catch {
+      return false
+    }
+  })
 
   ipcMain.handle('app:default-cwd', () => process.cwd())
   ipcMain.handle('app:hostname', () => hostname())

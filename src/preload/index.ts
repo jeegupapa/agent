@@ -66,6 +66,7 @@ const api = {
   fsRead: (path: string): Promise<FsRead> => ipcRenderer.invoke('fs:read', path),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('fs:reveal', path),
   homeDir: (): Promise<string> => ipcRenderer.invoke('fs:home'),
+  isDir: (path: string): Promise<boolean> => ipcRenderer.invoke('fs:is-dir', path),
 
   defaultCwd: (): Promise<string> => ipcRenderer.invoke('app:default-cwd'),
   hostname: (): Promise<string> => ipcRenderer.invoke('app:hostname'),

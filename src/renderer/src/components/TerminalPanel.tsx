@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { normPath } from '../memory/store'
 
 /**
  * 오른쪽 패널의 터미널 탭.
@@ -17,7 +18,12 @@ interface Entry {
   /** 메인 프로세스의 PTY id. 종료되면 null */
   ptyId: string | null
   title: string
+  /** 이 터미널이 맞춰져 있는 작업 폴더 (열린 곳, 또는 마지막으로 "이동"한 곳) */
   cwd: string
+  /** pwsh, powershell, bash 등. cd 명령 형식을 고를 때 쓴다 */
+  shell: string
+  /** "그대로 두기"를 누른 작업 폴더. 그 폴더인 동안은 다시 묻지 않는다 */
+  keptFor?: string
   term: Terminal
   fit: FitAddon
   el: HTMLDivElement
@@ -82,6 +88,7 @@ async function spawnInto(e: Entry): Promise<void> {
     const r = await window.api.termCreate({ cwd: e.cwd, cols, rows })
     e.ptyId = r.id
     e.cwd = r.cwd
+    e.shell = r.shell
     e.exitCode = null
     if (e.title === '터미널' || /^(pwsh|powershell|bash|zsh|sh|fish)/.test(e.title)) e.title = r.shell
   } catch (err) {
@@ -108,7 +115,7 @@ function createEntry(cwd: string): Entry {
   term.loadAddon(fit)
   const el = document.createElement('div')
   el.className = 'term-el'
-  const e: Entry = { key: `t${++seq}`, ptyId: null, title: '터미널', cwd, term, fit, el, exitCode: null, spawning: false }
+  const e: Entry = { key: `t${++seq}`, ptyId: null, title: '터미널', cwd, shell: '', term, fit, el, exitCode: null, spawning: false }
   term.onData((data) => {
     if (e.ptyId) window.api.termWrite(e.ptyId, data)
     else if (data === '\r') {
@@ -235,28 +242,59 @@ export function TerminalPanel(p: Props) {
     if (!sel) return
     p.onInsertText(sel.includes('\n') ? '```\n' + sel + '\n```' : sel)
   }
-  const cdHere = (): void => {
-    if (!active?.ptyId) return
-    const q = p.cwd.includes(' ') ? `"${p.cwd}"` : p.cwd
-    window.api.termWrite(active.ptyId, `cd ${q}\r`)
-    active.term.focus()
+  // 작업 폴더(세션)가 바뀌어 이 터미널이 다른 폴더에 남아 있는지
+  const isStale = (e: Entry): boolean =>
+    !!p.cwd && normPath(e.cwd) !== normPath(p.cwd) && normPath(e.keptFor ?? '') !== normPath(p.cwd)
+  /** 터미널을 현재 작업 폴더로 옮긴다. 셸이 끝난 탭은 다음에 시작할 폴더만 바꾼다 */
+  const moveHere = (e: Entry): void => {
+    if (!p.cwd) return
+    if (e.ptyId) window.api.termWrite(e.ptyId, cdCommand(e.shell, p.cwd) + '\r')
+    e.cwd = p.cwd
+    e.keptFor = undefined
+    notify()
+    e.term.focus()
   }
+  const keepThere = (e: Entry): void => {
+    e.keptFor = p.cwd
+    notify()
+    e.term.focus()
+  }
+  const activeStale = !!active && isStale(active)
 
   return (
     <div className="term-panel">
       <div className="term-tabs">
         {entries.map((e) => (
-          <div key={e.key} className={`term-tab ${e === active ? 'active' : ''} ${e.exitCode !== null ? 'exited' : ''}`} onClick={() => setActiveKey(e.key)} title={e.cwd}>
+          <div
+            key={e.key}
+            className={`term-tab ${e === active ? 'active' : ''} ${e.exitCode !== null ? 'exited' : ''} ${isStale(e) ? 'stale' : ''}`}
+            onClick={() => setActiveKey(e.key)}
+            title={isStale(e) ? `${e.cwd}\n작업 폴더가 바뀌었습니다. 이 터미널은 이전 폴더에 있습니다` : e.cwd}
+          >
+            {isStale(e) && <span className="term-tab-dot" />}
             <span className="term-tab-title">{e.title}</span>
             <button className="term-tab-close" title="터미널 닫기" onClick={(ev) => { ev.stopPropagation(); close(e) }}>×</button>
           </div>
         ))}
         <button className="term-tab-add" title="새 터미널 (현재 작업 폴더에서)" onClick={newTerminal}>+</button>
         <span className="term-spacer" />
-        <button className="pbtn" title="현재 작업 폴더로 이동 (cd)" onClick={cdHere} disabled={!active?.ptyId}>📂 cd</button>
+        <button className="pbtn" title="현재 작업 폴더로 이동 (cd)" onClick={() => active && moveHere(active)} disabled={!active?.ptyId}>📂 cd</button>
         <button className="pbtn" title="터미널에서 선택한 텍스트를 채팅 입력창에 넣기" onClick={sendSelection} disabled={!active}>선택 → 채팅</button>
         <button className="pbtn" title="화면 지우기" onClick={() => active?.term.clear()} disabled={!active}>지우기</button>
       </div>
+      {active && activeStale && (
+        <div className="term-stale">
+          <span className="term-stale-text" title={`터미널: ${active.cwd}\n작업 폴더: ${p.cwd}`}>
+            작업 폴더가 <b>{baseName(p.cwd)}</b> 로 바뀌었습니다. 터미널은 <b>{baseName(active.cwd)}</b>
+          </span>
+          <button className="pbtn accent" onClick={() => moveHere(active)} title={active.ptyId ? '이 터미널에 cd 명령을 보냅니다' : '다음에 시작할 때 이 폴더에서 엽니다'}>
+            이동
+          </button>
+          <button className="pbtn" onClick={() => keepThere(active)} title="이 터미널은 지금 폴더에 둡니다">
+            그대로 두기
+          </button>
+        </div>
+      )}
       <div className="term-host" ref={hostRef} />
       {entries.length === 0 && (
         <div className="term-empty">
@@ -265,6 +303,17 @@ export function TerminalPanel(p: Props) {
       )}
     </div>
   )
+}
+
+function baseName(p: string): string {
+  return p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
+}
+
+/** 셸 종류에 맞는 폴더 이동 명령. 공백·따옴표가 있는 경로도 그대로 들어가게 인용한다 */
+export function cdCommand(shell: string, dir: string): string {
+  if (/^(pwsh|powershell)/i.test(shell)) return `Set-Location -LiteralPath '${dir.replace(/'/g, "''")}'`
+  if (/^cmd/i.test(shell)) return `cd /d "${dir}"`
+  return `cd '${dir.replace(/'/g, `'\\''`)}'`
 }
 
 /** 셸이 알려준 창 제목을 탭에 맞게 줄인다: 실행 파일 전체 경로면 파일 이름만 */

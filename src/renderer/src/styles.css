@@ -732,3 +732,11 @@ pre.fs-text { margin: 0; padding: 0; background: transparent; border: none; max-
 /* 좁은 폭에서 버튼 글자가 세로로 꺾이지 않게 */
 .team-head button, .task-actions button { white-space: nowrap; flex-shrink: 0; }
 .task-actions { flex-wrap: wrap; }
+
+/* 작업 폴더가 바뀌어 이전 폴더에 남은 터미널 */
+.term-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
+.term-stale { display: flex; align-items: center; gap: 6px; padding: 5px 8px 5px 10px; font-size: 12px; background: rgba(227, 179, 65, 0.08); border-bottom: 1px solid rgba(227, 179, 65, 0.35); flex-shrink: 0; }
+.term-stale-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.term-stale-text b { color: var(--text); font-weight: 600; }
+button.pbtn.accent { color: var(--warn); border-color: rgba(227, 179, 65, 0.45); }
+button.pbtn.accent:hover:not(:disabled) { color: var(--text); background: rgba(227, 179, 65, 0.18); border-color: var(--warn); }

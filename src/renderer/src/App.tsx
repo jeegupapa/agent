@@ -54,6 +54,9 @@ export interface PlanUsage {
 }
 
 type RightTab = 'tools' | 'diff' | 'terminal' | 'browser' | 'files'
+
+/** 마지막 작업 폴더 (다음 실행 때 복원) */
+const CWD_KEY = 'claude-cli-studio.cwd'
 type SettingsTab = 'auth' | 'mcp' | 'skills' | 'update' | 'firebase' | 'memory'
 
 const EMPTY_USAGE: UsageSummary = {
@@ -131,13 +134,22 @@ export default function App() {
   const streamingId = useRef<string | null>(null)
 
   useEffect(() => {
-    window.api.defaultCwd().then(setCwd)
+    // 마지막으로 쓰던 작업 폴더로 시작한다. 그 폴더가 없어졌으면 앱이 실행된 위치로
+    void (async () => {
+      const last = localStorage.getItem(CWD_KEY)
+      setCwd(last && (await window.api.isDir(last)) ? last : await window.api.defaultCwd())
+    })()
     window.api.getConfig().then(setConfig)
     window.api.getUpdateStatus().then(setUpdateStatus)
     window.api.hostname().then(setHostname)
     void refreshAuth()
     return window.api.onUpdateStatus(setUpdateStatus)
   }, [refreshAuth])
+
+  // 작업 폴더가 바뀔 때마다 기억해 둔다 (폴더 선택, 저장된 세션 열기 모두)
+  useEffect(() => {
+    if (cwd) localStorage.setItem(CWD_KEY, cwd)
+  }, [cwd])
 
   // ----- 패널 레이아웃 (너비·표시) -----
   useEffect(() => saveLayout(layout), [layout])
