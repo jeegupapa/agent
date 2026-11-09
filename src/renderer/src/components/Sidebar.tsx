@@ -6,6 +6,7 @@ import type {
   PlanWindow,
   SavedSessionMeta,
   SessionInfo,
+  TeamUsage,
   UpdateStatus,
   UsageSummary
 } from '../../../shared/types'
@@ -28,6 +29,8 @@ interface Props {
   authStatus: AuthStatus | null
   mode: 'chat' | 'team'
   teamSummary: { running: number; attention: number }
+  /** 앱 실행 이후 팀(직원·팀장) 세션 사용량 합계 */
+  teamUsage: TeamUsage
   onModeChange: (m: 'chat' | 'team') => void
   history: {
     enabled: boolean
@@ -71,6 +74,15 @@ const WINDOW_META: Record<string, { label: string; order: number }> = {
 
 function windowLabel(type: string): string {
   return WINDOW_META[type]?.label ?? type
+}
+
+/** 1.5s / 2분 5초 / 1시간 3분 */
+function fmtDurationShort(ms: number): string {
+  const s = ms / 1000
+  if (s < 60) return s.toFixed(1) + 's'
+  const m = Math.floor(s / 60)
+  if (m < 60) return m + '분 ' + Math.round(s % 60) + '초'
+  return Math.floor(m / 60) + '시간 ' + (m % 60) + '분'
 }
 
 function fmtTokens(n: number): string {
@@ -147,7 +159,7 @@ export function PlanUsageView({ plan, auth, apiKeyMode }: { plan: PlanUsage | nu
     return (
       <div className="muted small">
         <b>{auth.subscriptionType ? planName(auth.subscriptionType) : 'claude.ai'}</b> 로그인됨{auth.email ? ` (${auth.email})` : ''}.
-        사용량 한도 막대는 첫 요청 뒤에 표시됩니다.
+        사용량 한도 막대는 첫 요청(채팅 또는 팀 작업)이 끝난 뒤에 표시됩니다.
       </div>
     )
   }
@@ -326,7 +338,7 @@ export function Sidebar(p: Props) {
       <h1 className="logo">
         <span className="dot" /> Claude CLI Studio
       </h1>
-      <UpdateBanner status={p.updateStatus} running={p.running} onOpen={() => p.onOpenSettings('update')} />
+      <UpdateBanner status={p.updateStatus} running={p.running || p.teamSummary.running > 0} onOpen={() => p.onOpenSettings('update')} />
 
       <div className="mode-switch">
         <button className={p.mode === 'chat' ? 'active' : ''} onClick={() => p.onModeChange('chat')}>
@@ -404,8 +416,37 @@ export function Sidebar(p: Props) {
         <PlanUsageView plan={p.plan} auth={p.authStatus} apiKeyMode={p.config?.auth.mode === 'apiKey'} />
       </section>
 
+      {p.teamUsage.runs > 0 && (
+        <section className="team-usage">
+          <h2 title="직원 작업과 팀장 배분이 쓴 양. 앱을 켠 뒤부터 센 값이며 채팅 세션과 따로 집계합니다">팀 작업 (앱 실행 이후)</h2>
+          <div className="kv">
+            <span>실행</span>
+            <b>{p.teamUsage.runs}회</b>
+          </div>
+          <div className="kv">
+            <span>턴 수</span>
+            <b>{p.teamUsage.numTurns}</b>
+          </div>
+          <div className="kv">
+            <span>소요 시간</span>
+            <b>{fmtDurationShort(p.teamUsage.durationMs)}</b>
+          </div>
+          <div
+            className="kv"
+            title={`입력 ${fmtTokens(p.teamUsage.inputTokens)} · 출력 ${fmtTokens(p.teamUsage.outputTokens)} · 캐시 읽기 ${fmtTokens(p.teamUsage.cacheReadTokens)} · 캐시 생성 ${fmtTokens(p.teamUsage.cacheCreationTokens)}\nAPI 환산 추정 $${p.teamUsage.totalCostUsd.toFixed(2)}`}
+          >
+            <span>토큰 합계</span>
+            <b>
+              {fmtTokens(
+                p.teamUsage.inputTokens + p.teamUsage.outputTokens + p.teamUsage.cacheReadTokens + p.teamUsage.cacheCreationTokens
+              )}
+            </b>
+          </div>
+        </section>
+      )}
+
       <section>
-        <h2>이번 세션</h2>
+        <h2 title="채팅에서 Claude 에게 직접 보낸 요청만 셉니다. 팀 작업은 위에 따로 표시됩니다">이번 세션 (채팅)</h2>
         <div className="kv">
           <span>턴 수</span>
           <b>{p.usage.numTurns}</b>

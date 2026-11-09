@@ -11,6 +11,7 @@ import { TeamRunner } from './team'
 import { TerminalManager } from './terminal'
 import { createSkill, listSkills, skillsDir } from './skills'
 import type {
+  ActiveWork,
   AppConfig,
   Attachment,
   AuthStatus,
@@ -18,6 +19,7 @@ import type {
   DispatchArgs,
   FsEntry,
   FsRead,
+  InstallResult,
   McpServerEntry,
   PermissionAnswer,
   SendPromptArgs,
@@ -206,6 +208,16 @@ function readForPreview(p: string): FsRead {
   }
 }
 
+/** 지금 끊기면 안 되는 일 (업데이트 설치·창 닫기 전에 확인) */
+function activeWork(): ActiveWork {
+  return {
+    chat: runner?.isRunning ?? false,
+    teamTasks: team?.runningTaskIds.length ?? 0,
+    dispatching: team?.isDispatching ?? false,
+    terminals: terminals?.ids.length ?? 0
+  }
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1400,
@@ -225,6 +237,30 @@ function createWindow(): void {
     }
   })
   terminals = new TerminalManager(win)
+
+  // Claude 가 일하는 중에 창을 닫으면 작업이 끊기므로 한 번 확인받는다 (업데이트 설치는 작업이 없을 때만 진행되므로 여기 걸리지 않는다)
+  let closeConfirmed = false
+  win.on('close', (e) => {
+    if (closeConfirmed) return
+    const w = activeWork()
+    const lines: string[] = []
+    if (w.chat) lines.push('· 채팅에서 Claude 가 응답 중입니다')
+    if (w.dispatching) lines.push('· 팀장이 요청을 배분하는 중입니다')
+    if (w.teamTasks > 0) lines.push(`· 직원 작업 ${w.teamTasks}개가 진행 중입니다`)
+    if (lines.length === 0) return
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      title: 'Claude CLI Studio',
+      message: '진행 중인 작업이 있습니다. 종료할까요?',
+      detail: `${lines.join('\n')}\n\n종료하면 작업이 중단됩니다. 중단된 직원 작업은 다음 실행 때 "중단됨"으로 남습니다.`,
+      buttons: ['계속 작업', '종료'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    })
+    if (choice === 1) closeConfirmed = true
+    else e.preventDefault()
+  })
 
   runner = new ClaudeRunner(win, () => ({ config: store.load(), apiKey: store.getApiKey() }))
   team = new TeamRunner(win, () => ({ config: store.load(), apiKey: store.getApiKey() }))
@@ -402,7 +438,16 @@ app.whenReady().then(() => {
   ipcMain.handle('update:get-status', () => updater?.getStatus() ?? null)
   ipcMain.handle('update:check', () => updater?.check())
   ipcMain.handle('update:download', () => updater?.download())
-  ipcMain.handle('update:install', () => updater?.install())
+  // 설치하면 앱이 재시작되므로, 끊기면 안 되는 일이 있으면 막고 터미널이 열려 있으면 확인을 요구한다
+  ipcMain.handle('update:install', (_e, opts?: { confirmTerminals?: boolean }): InstallResult => {
+    const work = activeWork()
+    if (work.chat || work.dispatching || work.teamTasks > 0) return { ok: false, reason: 'busy', work }
+    if (work.terminals > 0 && !opts?.confirmTerminals) return { ok: false, reason: 'terminals', work }
+    if (updater?.getStatus().state !== 'downloaded') return { ok: false, reason: 'not-ready', work }
+    updater.install()
+    return { ok: true }
+  })
+  ipcMain.handle('app:active-work', () => activeWork())
   ipcMain.handle('update:info', () => ({
     version: app.getVersion(),
     packaged: app.isPackaged,

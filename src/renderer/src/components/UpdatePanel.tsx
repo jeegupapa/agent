@@ -66,8 +66,8 @@ export function UpdateBanner(p: { status: UpdateStatus | null; running: boolean;
           <button
             className="small-btn primary"
             disabled={p.running}
-            title={p.running ? '작업이 끝난 뒤 재시작할 수 있습니다' : ''}
-            onClick={() => window.api.installUpdate()}
+            title={p.running ? '진행 중인 작업(채팅·팀)이 끝난 뒤 재시작할 수 있습니다' : ''}
+            onClick={() => void installUpdateWithChecks()}
           >
             재시작하고 설치
           </button>
@@ -139,7 +139,7 @@ export function UpdateTab(p: {
               </button>
             )}
             {s?.state === 'downloaded' && (
-              <button className="primary" disabled={p.running} onClick={() => window.api.installUpdate()}>
+              <button className="primary" disabled={p.running} title={p.running ? '진행 중인 작업(채팅·팀)이 끝난 뒤 재시작할 수 있습니다' : ''} onClick={() => void installUpdateWithChecks()}>
                 재시작하고 설치
               </button>
             )}
@@ -296,4 +296,31 @@ export function UpdateTab(p: {
       )}
     </div>
   )
+}
+
+/**
+ * "재시작하고 설치". 메인 프로세스가 진행 중인 작업을 확인해서,
+ * 채팅·팀 작업이 돌고 있으면 설치하지 않고, 터미널이 열려 있으면 닫혀도 되는지 한 번 묻는다.
+ */
+export async function installUpdateWithChecks(): Promise<void> {
+  let r = await window.api.installUpdate()
+  if (!r.ok && r.reason === 'terminals') {
+    const ok = window.confirm(
+      `열려 있는 터미널 ${r.work.terminals}개가 닫힙니다. 터미널에서 실행 중인 명령이 있으면 함께 종료됩니다.
+
+지금 재시작하고 설치할까요?`
+    )
+    if (!ok) return
+    r = await window.api.installUpdate({ confirmTerminals: true })
+  }
+  if (!r.ok && r.reason === 'busy') {
+    const what = [
+      r.work.chat ? '채팅 응답' : '',
+      r.work.dispatching ? '팀장 배분' : '',
+      r.work.teamTasks > 0 ? `직원 작업 ${r.work.teamTasks}개` : ''
+    ].filter(Boolean)
+    window.alert(`진행 중인 작업이 있어 지금은 설치할 수 없습니다 (${what.join(', ')}).
+
+작업이 끝난 뒤 다시 눌러 주세요. 앱을 종료할 때 설치되게 두어도 됩니다.`)
+  }
 }

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
+  ActiveWork,
   AppConfig,
   AppConfigView,
   Attachment,
@@ -10,6 +11,7 @@ import type {
   DispatchPlan,
   FsEntry,
   FsRead,
+  InstallResult,
   McpServerEntry,
   PermissionAnswer,
   PermissionRequest,
@@ -108,7 +110,9 @@ const api = {
   getUpdateStatus: (): Promise<UpdateStatus | null> => ipcRenderer.invoke('update:get-status'),
   checkForUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:check'),
   downloadUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:download'),
-  installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
+  /** 진행 중인 작업이 있으면 설치하지 않고 이유를 돌려준다. 터미널이 열려 있으면 confirmTerminals 로 다시 불러야 한다 */
+  installUpdate: (opts?: { confirmTerminals?: boolean }): Promise<InstallResult> => ipcRenderer.invoke('update:install', opts),
+  activeWork: (): Promise<ActiveWork> => ipcRenderer.invoke('app:active-work'),
   updateInfo: (): Promise<{ version: string; packaged: boolean; feed: string; logPath: string; hasToken: boolean }> =>
     ipcRenderer.invoke('update:info'),
   setUpdateToken: (token: string | null): Promise<AppConfigView> =>

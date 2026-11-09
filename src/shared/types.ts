@@ -600,3 +600,38 @@ export type FsRead =
   | { kind: 'image'; dataUrl: string; size: number }
   | { kind: 'binary'; size: number }
   | { kind: 'error'; message: string }
+
+// ---------- 사용량 / 업데이트 설치 ----------
+
+/** 팀장(배분) 세션의 이벤트에 붙는 가짜 작업 id. 사용량 집계에만 쓰고 작업 목록에는 넣지 않는다 */
+export const DISPATCH_TASK_ID = '__dispatch__'
+
+/** 앱 실행 이후 팀(직원·팀장) 세션이 쓴 사용량 합계 */
+export interface TeamUsage {
+  /** 끝난 실행 횟수 (직원 작업 라운드 + 팀장 배분) */
+  runs: number
+  numTurns: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  durationMs: number
+  totalCostUsd: number
+}
+
+/** 지금 끊기면 안 되는 일 */
+export interface ActiveWork {
+  /** 채팅에서 Claude 가 응답 중 */
+  chat: boolean
+  /** 진행 중인 직원 작업 수 */
+  teamTasks: number
+  /** 팀장이 요청을 배분하는 중 */
+  dispatching: boolean
+  /** 열려 있는 터미널 수 */
+  terminals: number
+}
+
+export type InstallResult =
+  | { ok: true }
+  /** busy: 진행 중인 작업이 있어 설치 불가 / terminals: 터미널이 닫히는 것을 확인받아야 함 / not-ready: 내려받은 업데이트 없음 */
+  | { ok: false; reason: 'busy' | 'terminals' | 'not-ready'; work: ActiveWork }

@@ -30,6 +30,8 @@ interface Props {
   onRefreshAuth: () => Promise<AuthStatus>
   memory: MemoryStore
   running: boolean
+  /** 직원 작업이 진행 중인지 (업데이트 설치 버튼을 잠근다) */
+  teamBusy: boolean
   fbUser: FbUser | null
   onSave: (config: AppConfig) => Promise<void>
   onSaveApiKey: (key: string | null) => Promise<void>
@@ -138,7 +140,7 @@ export function SettingsDialog(p: Props) {
             <FirebaseTab draft={draft} user={p.fbUser} onChange={setDraft} setMsg={setMsg} />
           )}
           {tab === 'update' && (
-            <UpdateTab draft={draft} status={p.updateStatus} running={p.running} onChange={setDraft} setMsg={setMsg} />
+            <UpdateTab draft={draft} status={p.updateStatus} running={p.running || p.teamBusy} onChange={setDraft} setMsg={setMsg} />
           )}
           {tab === 'skills' && (
             <SkillsTab

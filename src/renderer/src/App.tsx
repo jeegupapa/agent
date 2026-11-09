@@ -17,7 +17,7 @@ import type {
   UpdateStatus,
   UsageSummary
 } from '../../shared/types'
-import { EMPLOYEE_PRESETS, type MemoryItem } from '../../shared/types'
+import { DISPATCH_TASK_ID, EMPLOYEE_PRESETS, type MemoryItem, type TeamUsage } from '../../shared/types'
 import { Sidebar } from './components/Sidebar'
 import { SearchDialog } from './components/SearchDialog'
 import { MemoryDialog } from './memory/MemoryDialog'
@@ -57,6 +57,8 @@ type RightTab = 'tools' | 'diff' | 'terminal' | 'browser' | 'files'
 
 /** 마지막 작업 폴더 (다음 실행 때 복원) */
 const CWD_KEY = 'claude-cli-studio.cwd'
+
+const EMPTY_TEAM_USAGE: TeamUsage = { runs: 0, numTurns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, durationMs: 0, totalCostUsd: 0 }
 type SettingsTab = 'auth' | 'mcp' | 'skills' | 'update' | 'firebase' | 'memory'
 
 const EMPTY_USAGE: UsageSummary = {
@@ -82,6 +84,9 @@ export default function App() {
   const [toolCalls, setToolCalls] = useState<ToolCallRecord[]>([])
   const [usage, setUsage] = useState<UsageSummary>(EMPTY_USAGE)
   const [plan, setPlan] = useState<PlanUsage | null>(null)
+  // 앱 실행 이후 팀(직원·팀장) 세션이 쓴 사용량. 채팅 세션의 usage 와 따로 센다
+  const [teamUsage, setTeamUsage] = useState<TeamUsage>(EMPTY_TEAM_USAGE)
+  const teamUsageLast = useRef<Record<string, { numTurns: number; cost: number }>>({})
   // 권한 요청은 여러 작업에서 동시에 올 수 있어 큐로 둔다. 맨 앞 것을 보여준다
   const [permissions, setPermissions] = useState<PermissionRequest[]>([])
   const permission = permissions[0] ?? null
@@ -243,6 +248,31 @@ export default function App() {
   // 작업 이벤트 → 런타임 + 작업 레코드
   useEffect(() => {
     return window.api.onTeamEvent(({ taskId, event }) => {
+      // 플랜 한도는 계정 전체 값이라 직원·팀장 세션에서 온 것도 그대로 반영한다
+      if (event.kind === 'rate_limit') {
+        setPlan({ windows: event.windows, isUsingOverage: event.isUsingOverage, updatedAt: event.updatedAt })
+      }
+      if (event.kind === 'result') {
+        // 턴 수·비용은 세션을 이어갈 때(수정 요청·답변) 누적값으로 오므로 작업별 직전 값과의 차이만 더한다
+        const u = event.usage
+        const last = teamUsageLast.current[taskId] ?? { numTurns: 0, cost: 0 }
+        const dTurns = u.numTurns >= last.numTurns ? u.numTurns - last.numTurns : u.numTurns
+        const dCost = u.totalCostUsd >= last.cost ? u.totalCostUsd - last.cost : u.totalCostUsd
+        // 팀장 배분은 매번 새 세션이라 직전 값을 남기지 않는다
+        if (taskId !== DISPATCH_TASK_ID) teamUsageLast.current[taskId] = { numTurns: u.numTurns, cost: u.totalCostUsd }
+        setTeamUsage((t) => ({
+          runs: t.runs + 1,
+          numTurns: t.numTurns + dTurns,
+          inputTokens: t.inputTokens + u.inputTokens,
+          outputTokens: t.outputTokens + u.outputTokens,
+          cacheReadTokens: t.cacheReadTokens + u.cacheReadTokens,
+          cacheCreationTokens: t.cacheCreationTokens + u.cacheCreationTokens,
+          durationMs: t.durationMs + u.durationMs,
+          totalCostUsd: t.totalCostUsd + dCost
+        }))
+      }
+      // 팀장 세션은 사용량만 집계하고 작업 목록에는 넣지 않는다
+      if (taskId === DISPATCH_TASK_ID) return
       const prev = runtimeRef.current[taskId] ?? EMPTY_RUNTIME
       const next = applyEvent(prev, event)
       runtimeRef.current = { ...runtimeRef.current, [taskId]: next }
@@ -819,6 +849,7 @@ export default function App() {
         authStatus={authStatus}
         mode={mode}
         teamSummary={teamSummary}
+        teamUsage={teamUsage}
         onModeChange={setMode}
         history={{
           enabled: !!(config?.firebase.enabled && config.firebase.config),
@@ -1030,6 +1061,7 @@ export default function App() {
           initialTab={settingsTab}
           updateStatus={updateStatus}
           authStatus={authStatus}
+          teamBusy={teamSummary.running > 0}
           onRefreshAuth={refreshAuth}
           memory={memory}
           running={running}

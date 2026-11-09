@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron'
 import { ClaudeRunner, type RunnerSink } from './claude'
 import {
   EMPLOYEE_PRESETS,
+  DISPATCH_TASK_ID,
   TEAM_REPORT_RULES,
   type AppConfig,
   type ClaudeEvent,
@@ -51,6 +52,8 @@ export function parseDispatchPlan(text: string): DispatchPlan {
  */
 export class TeamRunner {
   private runners = new Map<string, ClaudeRunner>()
+  /** 팀장이 배분 중인 요청 수 */
+  private dispatching = 0
 
   constructor(
     private win: BrowserWindow,
@@ -59,6 +62,10 @@ export class TeamRunner {
 
   get runningTaskIds(): string[] {
     return [...this.runners.keys()]
+  }
+
+  get isDispatching(): boolean {
+    return this.dispatching > 0
   }
 
   /** 직원 지시문 + 공통 보고 규칙 */
@@ -155,21 +162,30 @@ ${args.memory ? `${args.memory.trim()}\n\n` : ''}# 배분 규칙
         if (event.kind === 'text_done') lastText = event.text
         else if (event.kind === 'error') errorText = event.message
         else if (event.kind === 'result' && event.isError) errorText = event.errorText ?? '팀장 실행이 실패했습니다.'
+        // 팀장 세션이 쓴 사용량도 사이드바(플랜 한도·팀 사용량)에 잡히도록 전달한다
+        if ((event.kind === 'rate_limit' || event.kind === 'result') && !this.win.isDestroyed()) {
+          this.win.webContents.send('team:event', { taskId: DISPATCH_TASK_ID, event })
+        }
       },
       // 읽기 도구만 허용하므로 권한 요청이 올 일은 거의 없다. 오면 거부
       requestPermission: (req) => runner?.answerPermission({ requestId: req.requestId, allow: false })
     }
     runner = new ClaudeRunner(this.win, this.getConfig, sink)
-    await runner.run({
-      prompt: `# 사용자 요청\n\n${args.request.trim()}\n\n작업 폴더: ${args.cwd}`,
-      cwd: args.cwd,
-      permissionMode: 'default',
-      systemPromptAppend: TeamRunner.dispatcherPrompt(args),
-      model: args.model,
-      allowedTools: ['Read', 'Glob', 'Grep'],
-      disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'Task', 'WebFetch', 'WebSearch'],
-      maxTurns: 10
-    })
+    this.dispatching++
+    try {
+      await runner.run({
+        prompt: `# 사용자 요청\n\n${args.request.trim()}\n\n작업 폴더: ${args.cwd}`,
+        cwd: args.cwd,
+        permissionMode: 'default',
+        systemPromptAppend: TeamRunner.dispatcherPrompt(args),
+        model: args.model,
+        allowedTools: ['Read', 'Glob', 'Grep'],
+        disallowedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'Task', 'WebFetch', 'WebSearch'],
+        maxTurns: 10
+      })
+    } finally {
+      this.dispatching--
+    }
     if (!lastText && errorText) throw new Error(errorText)
     return parseDispatchPlan(lastText)
   }
