@@ -565,3 +565,33 @@ export interface CreateSkillArgs {
   description: string
   body: string
 }
+
+// ---------- 터미널 / 폴더 패널 ----------
+
+/** 메인 → 렌더러: PTY 출력과 종료 */
+export type TermEvent =
+  | { kind: 'data'; id: string; data: string }
+  | { kind: 'exit'; id: string; exitCode: number }
+
+export interface TermCreateResult {
+  id: string
+  /** pwsh, powershell, bash 등 */
+  shell: string
+  cwd: string
+}
+
+/** 폴더 패널의 한 항목 */
+export interface FsEntry {
+  name: string
+  path: string
+  isDir: boolean
+  size?: number
+  mtime?: number
+}
+
+/** 폴더 패널 미리보기용 파일 내용 */
+export type FsRead =
+  | { kind: 'text'; text: string; truncated: boolean; size: number }
+  | { kind: 'image'; dataUrl: string; size: number }
+  | { kind: 'binary'; size: number }
+  | { kind: 'error'; message: string }

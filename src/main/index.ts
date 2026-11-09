@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { execFile, spawn } from 'child_process'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { homedir, hostname } from 'os'
 import { basename, dirname, extname, join } from 'path'
 import { createRequire } from 'module'
@@ -8,6 +8,7 @@ import { ClaudeRunner } from './claude'
 import { ConfigStore } from './config'
 import { AppUpdater } from './updater'
 import { TeamRunner } from './team'
+import { TerminalManager } from './terminal'
 import { createSkill, listSkills, skillsDir } from './skills'
 import type {
   AppConfig,
@@ -15,6 +16,8 @@ import type {
   AuthStatus,
   CreateSkillArgs,
   DispatchArgs,
+  FsEntry,
+  FsRead,
   McpServerEntry,
   PermissionAnswer,
   SendPromptArgs,
@@ -25,6 +28,7 @@ import type {
 let runner: ClaudeRunner | null = null
 let team: TeamRunner | null = null
 let updater: AppUpdater | null = null
+let terminals: TerminalManager | null = null
 const store = new ConfigStore()
 
 /** SDK 와 함께 설치된 claude.exe 경로 (터미널 로그인용) */
@@ -146,6 +150,62 @@ function importClaudeMcp(cwd: string): McpServerEntry[] {
   })
 }
 
+/** 폴더 패널: 한 단계 아래 항목들 (폴더 먼저, 이름순). 읽을 수 없으면 빈 배열 */
+function listDir(dir: string): FsEntry[] {
+  try {
+    const out: FsEntry[] = []
+    for (const d of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, d.name)
+      let isDir = d.isDirectory()
+      let size: number | undefined
+      let mtime: number | undefined
+      if (d.isSymbolicLink()) {
+        try {
+          isDir = statSync(p).isDirectory()
+        } catch {
+          /* 깨진 링크는 파일처럼 보여준다 */
+        }
+      }
+      if (!isDir) {
+        try {
+          const st = statSync(p)
+          size = st.size
+          mtime = st.mtimeMs
+        } catch {
+          /* 접근 불가 */
+        }
+      }
+      out.push({ name: d.name, path: p, isDir, size, mtime })
+      if (out.length >= 3000) break
+    }
+    out.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name, 'ko', { sensitivity: 'base', numeric: true }) : a.isDir ? -1 : 1))
+    return out
+  } catch {
+    return []
+  }
+}
+
+/** 폴더 패널 미리보기: 텍스트는 256KB 까지, 이미지는 8MB 까지 data URL 로 */
+function readForPreview(p: string): FsRead {
+  try {
+    const st = statSync(p)
+    if (st.isDirectory()) return { kind: 'error', message: '폴더입니다.' }
+    const mime = mimeOf(p)
+    if (mime.startsWith('image/')) {
+      if (st.size > 8 * 1024 * 1024) return { kind: 'binary', size: st.size }
+      return { kind: 'image', dataUrl: `data:${mime};base64,${readFileSync(p).toString('base64')}`, size: st.size }
+    }
+    const LIMIT = 256 * 1024
+    const buf = readFileSync(p)
+    const head = buf.subarray(0, Math.min(buf.length, 8192))
+    if (head.includes(0)) return { kind: 'binary', size: st.size }
+    const truncated = buf.length > LIMIT
+    return { kind: 'text', text: (truncated ? buf.subarray(0, LIMIT) : buf).toString('utf8'), truncated, size: st.size }
+  } catch (e) {
+    return { kind: 'error', message: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1400,
@@ -159,9 +219,12 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // 오른쪽 패널의 내장 브라우저(<webview>)
+      webviewTag: true
     }
   })
+  terminals = new TerminalManager(win)
 
   runner = new ClaudeRunner(win, () => ({ config: store.load(), apiKey: store.getApiKey() }))
   team = new TeamRunner(win, () => ({ config: store.load(), apiKey: store.getApiKey() }))
@@ -183,6 +246,22 @@ function createWindow(): void {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// 내장 브라우저(<webview>) 보안: 게스트 페이지에는 preload·Node 를 주지 않고, 새 창은 같은 webview 안에서 연다
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-attach-webview', (_ev, webPreferences) => {
+    delete (webPreferences as { preload?: string }).preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+  })
+  contents.on('did-attach-webview', (_ev, guest) => {
+    guest.setWindowOpenHandler(({ url }) => {
+      if (/^https?:/i.test(url)) void guest.loadURL(url)
+      return { action: 'deny' }
+    })
+  })
+})
 
 app.whenReady().then(() => {
   // ----- Claude 실행 -----
@@ -253,6 +332,21 @@ app.whenReady().then(() => {
       return null
     }
   })
+  // ----- 터미널 패널 -----
+  ipcMain.handle('term:create', (_e, args: { cwd: string; cols?: number; rows?: number }) => {
+    if (!terminals) throw new Error('창이 준비되지 않았습니다.')
+    return terminals.create(args.cwd, args.cols, args.rows)
+  })
+  ipcMain.on('term:write', (_e, id: string, data: string) => terminals?.write(id, data))
+  ipcMain.on('term:resize', (_e, id: string, cols: number, rows: number) => terminals?.resize(id, cols, rows))
+  ipcMain.handle('term:kill', (_e, id: string) => terminals?.kill(id))
+
+  // ----- 폴더 패널 -----
+  ipcMain.handle('fs:list', (_e, dir: string): FsEntry[] => listDir(dir))
+  ipcMain.handle('fs:read', (_e, p: string): FsRead => readForPreview(p))
+  ipcMain.handle('fs:reveal', (_e, p: string) => shell.showItemInFolder(p))
+  ipcMain.handle('fs:home', () => homedir())
+
   ipcMain.handle('app:default-cwd', () => process.cwd())
   ipcMain.handle('app:hostname', () => hostname())
   ipcMain.handle('app:open-path', (_e, p: string) => shell.openPath(p))

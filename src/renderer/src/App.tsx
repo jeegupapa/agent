@@ -24,6 +24,9 @@ import { activeMemories, parseRememberCommand, renderMemory, useMemoryStore } fr
 import { Chat, type ChatItem } from './components/Chat'
 import { ToolLog } from './components/ToolLog'
 import { DiffPanel } from './components/DiffPanel'
+import { TerminalPanel } from './components/TerminalPanel'
+import { BrowserPanel } from './components/BrowserPanel'
+import { FolderPanel } from './components/FolderPanel'
 import { PermissionDialog } from './components/PermissionDialog'
 import { SettingsDialog } from './components/SettingsDialog'
 import type { SyncState } from './components/FirebasePanel'
@@ -49,7 +52,7 @@ export interface PlanUsage {
   updatedAt: number
 }
 
-type RightTab = 'tools' | 'diff'
+type RightTab = 'tools' | 'diff' | 'terminal' | 'browser' | 'files'
 type SettingsTab = 'auth' | 'mcp' | 'skills' | 'update' | 'firebase' | 'memory'
 
 const EMPTY_USAGE: UsageSummary = {
@@ -92,6 +95,13 @@ export default function App() {
   const [rightTab, setRightTab] = useState<RightTab>('tools')
   const [selectedTool, setSelectedTool] = useState<string | null>(null)
   const [insertRequest, setInsertRequest] = useState<{ text: string; nonce: number } | null>(null)
+  const [attachRequest, setAttachRequest] = useState<{ attachments: Attachment[]; nonce: number } | null>(null)
+  // 터미널·브라우저는 한 번 열면 다른 탭으로 가도 살려 둔다 (PTY 화면, 페이지 상태 유지)
+  const [openedTabs, setOpenedTabs] = useState<{ terminal: boolean; browser: boolean }>({ terminal: false, browser: false })
+  useEffect(() => {
+    if (rightTab === 'terminal' || rightTab === 'browser')
+      setOpenedTabs((o) => (o[rightTab] ? o : { ...o, [rightTab]: true }))
+  }, [rightTab])
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   // claude.ai 로그인 여부·플랜 (요청을 보내기 전에도 표시)
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null)
@@ -145,6 +155,11 @@ export default function App() {
       } else if (e.key.toLowerCase() === 'k' && !e.shiftKey) {
         e.preventDefault()
         setSearchOpen((o) => !o)
+      } else if (e.key === '`') {
+        // Ctrl+` : 터미널 탭 열기
+        e.preventDefault()
+        setLayout((l) => (l.rightOpen ? l : { ...l, rightOpen: true }))
+        setRightTab('terminal')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -713,6 +728,16 @@ export default function App() {
     }
   }
 
+  // 오른쪽 패널(터미널·브라우저·폴더) → 채팅 입력창
+  const insertToChat = (text: string): void => {
+    setMode('chat')
+    setInsertRequest({ text, nonce: Date.now() })
+  }
+  const attachToChat = (attachments: Attachment[]): void => {
+    setMode('chat')
+    setAttachRequest({ attachments, nonce: Date.now() })
+  }
+
   const answerPermission = (allow: boolean, always = false): void => {
     if (!permission) return
     window.api.answerPermission({ requestId: permission.requestId, allow, always })
@@ -856,6 +881,7 @@ export default function App() {
         status={status}
         slashCommands={session?.slashCommands ?? []}
         insertRequest={insertRequest}
+        attachRequest={attachRequest}
         teamMode={teamChat}
         tasks={team.tasks}
         employees={team.employees}
@@ -886,17 +912,36 @@ export default function App() {
           <button className="panel-toggle inline" title="도구 패널 숨기기 (Ctrl+J)" onClick={toggleRight}>
             ▶
           </button>
-          <button className={rightTab === 'tools' ? 'active' : ''} onClick={() => setRightTab('tools')}>
-            도구 호출 ({panelCalls.length})
+          <button className={rightTab === 'tools' ? 'active' : ''} onClick={() => setRightTab('tools')} title="도구 호출">
+            도구 ({panelCalls.length})
           </button>
-          <button className={rightTab === 'diff' ? 'active' : ''} onClick={() => setRightTab('diff')}>
-            변경 사항
+          <button className={rightTab === 'diff' ? 'active' : ''} onClick={() => setRightTab('diff')} title="변경 사항">
+            변경
+          </button>
+          <button className={rightTab === 'terminal' ? 'active' : ''} onClick={() => setRightTab('terminal')} title="터미널 (Ctrl+`)">
+            터미널
+          </button>
+          <button className={rightTab === 'browser' ? 'active' : ''} onClick={() => setRightTab('browser')} title="내장 브라우저">
+            브라우저
+          </button>
+          <button className={rightTab === 'files' ? 'active' : ''} onClick={() => setRightTab('files')} title="작업 폴더의 파일">
+            폴더
           </button>
         </div>
-        {rightTab === 'tools' ? (
-          <ToolLog calls={panelCalls} selected={selectedTool} onSelect={selectTool} />
-        ) : (
-          <DiffPanel calls={panelCalls} selected={selectedTool} onSelect={setSelectedTool} />
+        {rightTab === 'tools' && <ToolLog calls={panelCalls} selected={selectedTool} onSelect={selectTool} />}
+        {rightTab === 'diff' && <DiffPanel calls={panelCalls} selected={selectedTool} onSelect={setSelectedTool} />}
+        {openedTabs.terminal && (
+          <div className="right-keep" style={{ display: rightTab === 'terminal' ? 'flex' : 'none' }}>
+            <TerminalPanel cwd={cwd} visible={rightTab === 'terminal'} onInsertText={insertToChat} />
+          </div>
+        )}
+        {openedTabs.browser && (
+          <div className="right-keep" style={{ display: rightTab === 'browser' ? 'flex' : 'none' }}>
+            <BrowserPanel onAttach={attachToChat} onInsertText={insertToChat} />
+          </div>
+        )}
+        {rightTab === 'files' && (
+          <FolderPanel cwd={cwd} refreshKey={panelCalls.length} onPickFolder={pickFolder} onAttach={attachToChat} onInsertText={insertToChat} />
         )}
       </aside>
       ) : (

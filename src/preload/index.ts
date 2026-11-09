@@ -8,6 +8,8 @@ import type {
   CreateSkillArgs,
   DispatchArgs,
   DispatchPlan,
+  FsEntry,
+  FsRead,
   McpServerEntry,
   PermissionAnswer,
   PermissionRequest,
@@ -16,6 +18,8 @@ import type {
   SkillScope,
   TeamEvent,
   TeamStartArgs,
+  TermCreateResult,
+  TermEvent,
   UpdateStatus
 } from '../shared/types'
 
@@ -45,6 +49,24 @@ const api = {
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   saveClipboardImage: (args: { base64: string; mime: string }): Promise<Attachment> => ipcRenderer.invoke('attach:save-clipboard', args),
   attachmentPreview: (path: string): Promise<string | null> => ipcRenderer.invoke('attach:preview', path),
+  // 터미널 패널 (PTY)
+  termCreate: (args: { cwd: string; cols?: number; rows?: number }): Promise<TermCreateResult> =>
+    ipcRenderer.invoke('term:create', args),
+  termWrite: (id: string, data: string): void => ipcRenderer.send('term:write', id, data),
+  termResize: (id: string, cols: number, rows: number): void => ipcRenderer.send('term:resize', id, cols, rows),
+  termKill: (id: string): Promise<void> => ipcRenderer.invoke('term:kill', id),
+  onTermEvent: (cb: (ev: TermEvent) => void): (() => void) => {
+    const handler = (_: unknown, ev: TermEvent): void => cb(ev)
+    ipcRenderer.on('term:event', handler)
+    return () => ipcRenderer.removeListener('term:event', handler)
+  },
+
+  // 폴더 패널
+  fsList: (dir: string): Promise<FsEntry[]> => ipcRenderer.invoke('fs:list', dir),
+  fsRead: (path: string): Promise<FsRead> => ipcRenderer.invoke('fs:read', path),
+  revealPath: (path: string): Promise<void> => ipcRenderer.invoke('fs:reveal', path),
+  homeDir: (): Promise<string> => ipcRenderer.invoke('fs:home'),
+
   defaultCwd: (): Promise<string> => ipcRenderer.invoke('app:default-cwd'),
   hostname: (): Promise<string> => ipcRenderer.invoke('app:hostname'),
   openPath: (p: string): Promise<string> => ipcRenderer.invoke('app:open-path', p),

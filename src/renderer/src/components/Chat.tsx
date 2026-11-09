@@ -23,6 +23,8 @@ interface Props {
   slashCommands: string[]
   /** 설정 화면 등에서 입력창에 텍스트를 밀어넣을 때 */
   insertRequest: { text: string; nonce: number } | null
+  /** 폴더·브라우저 패널에서 첨부를 밀어넣을 때 */
+  attachRequest: { attachments: Attachment[]; nonce: number } | null
   /** 켜져 있으면 입력한 요청을 팀장이 받아 직원에게 배분한다 */
   teamMode: boolean
   tasks: TeamTask[]
@@ -39,6 +41,10 @@ interface Props {
 
 /** 이미지 첨부의 미리보기(data URL). 세션 저장에는 넣지 않고 렌더러 메모리에만 둔다 */
 const previewCache = new Map<string, string>()
+
+// 이미 반영한 요청. 팀 화면에 다녀와 Chat 이 다시 마운트돼도 같은 요청을 두 번 넣지 않는다
+let lastInsertNonce = 0
+let lastAttachNonce = 0
 
 function fmtSize(n?: number): string {
   if (!n && n !== 0) return ''
@@ -136,13 +142,22 @@ export function Chat(p: Props) {
   }, [p.items, p.toolCalls])
 
   useEffect(() => {
-    if (p.insertRequest) {
+    if (p.insertRequest && p.insertRequest.nonce !== lastInsertNonce) {
+      lastInsertNonce = p.insertRequest.nonce
       // 여러 줄(참조 블록)은 줄을 바꿔 붙인다
       const text = p.insertRequest.text
       setDraft((d) => (d ? d + (text.includes('\n') ? '\n' : ' ') : '') + text)
       textareaRef.current?.focus()
     }
   }, [p.insertRequest])
+
+  useEffect(() => {
+    if (p.attachRequest && p.attachRequest.nonce !== lastAttachNonce) {
+      lastAttachNonce = p.attachRequest.nonce
+      addAttachments(p.attachRequest.attachments)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.attachRequest])
 
   const canSend = (draft.trim().length > 0 || attachments.length > 0) && !p.running
   const submit = (): void => {

@@ -16,7 +16,7 @@ export const DEFAULT_LAYOUT: PanelLayout = {
 
 export const LIMITS = {
   sidebar: { min: 200, max: 520 },
-  right: { min: 280, max: 900 },
+  right: { min: 280, max: 1200 },
   /** 가운데 채팅이 이보다 좁아지지 않게 한다 */
   chatMin: 360
 }
