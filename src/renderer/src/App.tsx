@@ -9,6 +9,7 @@ import type {
   TeamTask,
   PermissionRequest,
   PermissionMode,
+  ReviewDecision,
   PlanWindow,
   SavedSessionMeta,
   SessionInfo,
@@ -290,7 +291,7 @@ export default function App() {
       })
   }
 
-  const reviewTask = (id: string, decision: 'approved' | 'changes_requested', comment: string): void => {
+  const reviewTask = (id: string, decision: ReviewDecision, comment: string): void => {
     const t = team.tasks.find((x) => x.id === id)
     if (!t) return
     const reviews = [...t.reviews, { at: Date.now(), decision, comment: comment || undefined }]
@@ -300,8 +301,13 @@ export default function App() {
     }
     const round = t.round + 1
     const followUp =
-      `# 수정 요청 (${round}차)\n\n${comment}\n\n` +
-      `이전 작업을 이어서 반영하세요. 끝나면 다시 "## 보고" 형식으로 보고하세요.`
+      decision === 'answered'
+        ? // 보고서의 확인 요청(질문)에 대한 답. 수정 지시가 아니라 판단 근거를 주는 것이다
+          `# 확인 요청에 대한 답변\n\n${comment}\n\n` +
+          `위 답변을 기준으로 이전 작업을 이어서 진행하세요. 답변 때문에 더 바꿀 것이 없다면 파일을 건드리지 말고 그 사실만 보고하세요. ` +
+          `끝나면 다시 "## 보고" 형식으로 보고하세요.`
+        : `# 수정 요청 (${round}차)\n\n${comment}\n\n` +
+          `이전 작업을 이어서 반영하세요. 끝나면 다시 "## 보고" 형식으로 보고하세요.`
     // 채팅에서 배분된 작업은 채팅에 머문다
     startTask({ ...t, reviews, round }, followUp, { stay: t.origin?.kind === 'chat' })
   }

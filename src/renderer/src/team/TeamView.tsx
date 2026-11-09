@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Employee, TeamTask } from '../../../shared/types'
+import type { Employee, ReviewDecision, TeamTask } from '../../../shared/types'
+import { AnswerBox, extractQuestions } from './AnswerBox'
 import { Markdown } from '../components/Markdown'
 import { ToolChip } from '../components/ToolChip'
 import { EmployeeForm, TaskForm } from './TeamForms'
@@ -21,7 +22,7 @@ export interface TeamViewProps {
   onRerunTask: (task: TeamTask) => void
   onStopTask: (id: string) => void
   onDeleteTask: (id: string) => void
-  onReview: (id: string, decision: 'approved' | 'changes_requested', comment: string) => void
+  onReview: (id: string, decision: ReviewDecision, comment: string) => void
   onSelectTool: (id: string) => void
 }
 
@@ -183,6 +184,11 @@ export function TeamView(p: TeamViewProps) {
                           <div className="task-title">
                             {t.title}
                             {t.round > 0 && <span className="badge">{t.round}차 수정</span>}
+                            {t.status === 'needs_review' && extractQuestions(t.report).length > 0 && (
+                              <span className="badge ask" title="보고서에 직원의 확인 요청이 있습니다. 열어서 답해 주세요">
+                                ❓ 확인 요청 {extractQuestions(t.report).length}
+                              </span>
+                            )}
                           </div>
                           <div className="task-sub muted small">
                             {e?.name ?? '삭제된 직원'} · {isActive(t.status) ? fmtDuration(t.startedAt) + ' 경과' : fmtTime(t.finishedAt ?? t.createdAt)}
@@ -262,7 +268,7 @@ function TaskDetail(p: {
   onStop: () => void
   onRerun: () => void
   onDelete: () => void
-  onReview: (decision: 'approved' | 'changes_requested', comment: string) => void
+  onReview: (decision: ReviewDecision, comment: string) => void
   onSelectTool: (id: string) => void
   onClose: () => void
 }) {
@@ -279,6 +285,14 @@ function TaskDetail(p: {
 
   const active = isActive(t.status)
   const callById = (id: string) => rt.toolCalls.find((c) => c.id === id)
+  // 보고서의 "확인 요청" 항목. 검토 대기 중일 때만 답변 칸을 보여준다
+  const questions = t.status === 'needs_review' ? extractQuestions(t.report) : []
+  const canFollowUp = t.status === 'needs_review' || t.status === 'failed' || t.status === 'stopped' || t.status === 'approved'
+  const sendComment = (decision: 'answered' | 'changes_requested'): void => {
+    if (!comment.trim()) return
+    p.onReview(decision, comment.trim())
+    setComment('')
+  }
 
   return (
     <div className="task-detail">
@@ -321,6 +335,8 @@ function TaskDetail(p: {
       {tab === 'report' && (
         <div className="task-report">
           {t.error && <div className="notice error">{t.error}</div>}
+          {/* 확인 요청은 스크롤 없이 바로 답할 수 있게 보고서보다 위에 둔다 */}
+          {questions.length > 0 && <AnswerBox key={`${t.id}:${t.round}`} questions={questions} onSend={(text) => p.onReview('answered', text)} />}
           {t.report ? (
             <div className="bubble md">
               <Markdown text={t.report} />
@@ -331,8 +347,8 @@ function TaskDetail(p: {
           {t.reviews.length > 0 && (
             <div className="review-history">
               {t.reviews.map((r, i) => (
-                <div key={i} className="small">
-                  <b>{r.decision === 'approved' ? '승인' : '수정 요청'}</b> {fmtTime(r.at)}
+                <div key={i} className="small review-item">
+                  <b>{r.decision === 'approved' ? '승인' : r.decision === 'answered' ? '답변' : '수정 요청'}</b> {fmtTime(r.at)}
                   {r.comment ? ` — ${r.comment}` : ''}
                 </div>
               ))}
@@ -415,27 +431,22 @@ function TaskDetail(p: {
           </button>
         )}
         <span className="spacer" />
-        {(t.status === 'needs_review' || t.status === 'failed' || t.status === 'stopped' || t.status === 'approved') && (
+        {canFollowUp && (
           <>
             <input
               className="text"
-              placeholder="수정 요청 내용 (예: 테스트도 추가해 주세요)"
+              placeholder="직원에게 보낼 답변 또는 수정 요청 내용"
               value={comment}
               onChange={(ev) => setComment(ev.target.value)}
               onKeyDown={(ev) => {
-                if (ev.key === 'Enter' && comment.trim()) {
-                  p.onReview('changes_requested', comment.trim())
-                  setComment('')
-                }
+                if (ev.nativeEvent.isComposing) return
+                if (ev.key === 'Enter') sendComment('changes_requested')
               }}
             />
-            <button
-              disabled={!comment.trim()}
-              onClick={() => {
-                p.onReview('changes_requested', comment.trim())
-                setComment('')
-              }}
-            >
+            <button disabled={!comment.trim()} onClick={() => sendComment('answered')} title="직원의 질문·확인 요청에 답합니다. 직원이 답을 반영해 이어서 진행합니다">
+              💬 답변
+            </button>
+            <button disabled={!comment.trim()} onClick={() => sendComment('changes_requested')} title="결과물을 고치라고 지시합니다">
               수정 요청
             </button>
             {t.status === 'needs_review' && (

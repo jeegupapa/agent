@@ -163,9 +163,12 @@ export type TaskStatus =
   | 'failed'
   | 'stopped'
 
+/** 보고서에 대한 사용자의 응답: 승인 / 수정 요청 / 확인 요청에 대한 답변 */
+export type ReviewDecision = 'approved' | 'changes_requested' | 'answered'
+
 export interface TaskReview {
   at: number
-  decision: 'approved' | 'changes_requested'
+  decision: ReviewDecision
   comment?: string
 }
 
@@ -375,8 +378,10 @@ export const TEAM_REPORT_RULES = `
 **한 일**: (3줄 이내 요약)
 **변경한 파일**: (경로 목록, 없으면 "없음")
 **검증**: (실행한 테스트·빌드와 결과)
-**남은 문제 / 확인 요청**: (없으면 "없음")
+**남은 문제 / 확인 요청**: (없으면 "없음". 있으면 한 건에 한 줄씩 번호 목록으로)
 - 지시가 모호하면 추측으로 크게 바꾸지 말고, 가장 안전한 해석으로 진행한 뒤 보고서의 "확인 요청"에 질문을 적으세요.
+- 확인 요청은 사용자가 항목마다 바로 답할 수 있게, 무엇을 정해 달라는지와 선택지를 한 줄에 담아 쓰세요.
+- "확인 요청에 대한 답변"을 받으면 그 답을 기준으로 이어서 진행하고, 답이 없는 항목은 가장 안전한 쪽으로 판단하세요.
 - 사용자는 보고서만 읽고 승인 여부를 결정하므로, 보고서는 그 자체로 이해되게 쓰세요.`
 
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
-import type { Attachment, Employee, TeamTask, ToolCallRecord } from '../../../shared/types'
+import type { Attachment, Employee, ReviewDecision, TeamTask, ToolCallRecord } from '../../../shared/types'
+import { AnswerBox, extractQuestions } from '../team/AnswerBox'
 import { ToolChip } from './ToolChip'
 import { Markdown } from './Markdown'
 import { STATUS_LABEL, isActive } from '../team/runtime'
@@ -33,7 +34,7 @@ interface Props {
   onSend: (prompt: string, attachments: Attachment[]) => void
   onInterrupt: () => void
   onSelectTool: (id: string) => void
-  onReviewTask: (taskId: string, decision: 'approved' | 'changes_requested', comment: string) => void
+  onReviewTask: (taskId: string, decision: ReviewDecision, comment: string) => void
   onOpenTask: (taskId: string) => void
   /** 메시지를 메모리로 저장 (💾 버튼) */
   onRemember: (text: string) => void
@@ -458,16 +459,19 @@ function ReportCard(p: {
   item: Extract<ChatItem, { type: 'report' }>
   task: TeamTask | undefined
   employee: Employee | undefined
-  onReview: (taskId: string, decision: 'approved' | 'changes_requested', comment: string) => void
+  onReview: (taskId: string, decision: ReviewDecision, comment: string) => void
   onOpen: (taskId: string) => void
 }) {
   const [asking, setAsking] = useState(false)
+  const [answering, setAnswering] = useState(false)
   const [comment, setComment] = useState('')
   const [expanded, setExpanded] = useState(false)
   const t = p.task
   const e = p.employee
   const latest = !!t && t.round === p.item.round
   const canReview = latest && t.status === 'needs_review'
+  // 보고서에 직원의 확인 요청이 있으면 카드에 바로 답변 칸을 띄운다
+  const questions = canReview ? extractQuestions(p.item.report) : []
   const label = t ? STATUS_LABEL[t.status] : '삭제됨'
   // 기본은 접힌 상태: "한 일" 한 줄만 보여 주고, 펼치면 전체 보고서
   const summary = reportSummary(p.item.report)
@@ -499,6 +503,16 @@ function ReportCard(p: {
           )
         ) : (
           !p.item.error && <div className="muted small">보고서 없이 끝났습니다. 작업 로그를 확인해 보세요.</div>
+        )}
+        {canReview && (questions.length > 0 || answering) && (
+          <AnswerBox
+            questions={questions}
+            onSend={(text) => {
+              p.onReview(t.id, 'answered', text)
+              setAnswering(false)
+            }}
+            onCancel={questions.length === 0 ? () => setAnswering(false) : undefined}
+          />
         )}
         {canReview &&
           (asking ? (
@@ -537,6 +551,11 @@ function ReportCard(p: {
               <button className="primary" onClick={() => p.onReview(t.id, 'approved', '')}>
                 ✓ 승인
               </button>
+              {questions.length === 0 && !answering && (
+                <button onClick={() => setAnswering(true)} title="직원의 질문이나 보고 내용에 답합니다. 직원이 답을 반영해 이어서 진행합니다">
+                  💬 답변
+                </button>
+              )}
               <button onClick={() => setAsking(true)}>수정 요청</button>
               {p.item.report && (
                 <button className="ghost-btn" onClick={() => setExpanded((v) => !v)}>

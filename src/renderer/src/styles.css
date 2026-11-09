@@ -716,3 +716,19 @@ button.fs-act:hover { background: var(--bg); color: var(--text); }
 .fs-preview-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px; background: var(--bg); font-size: 12px; }
 pre.fs-text { margin: 0; padding: 0; background: transparent; border: none; max-height: none; font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre; overflow: visible; tab-size: 2; }
 .fs-image { max-width: 100%; height: auto; border-radius: 4px; background: repeating-conic-gradient(#2a303c 0% 25%, #1e232d 0% 50%) 0 0 / 16px 16px; }
+
+/* ---------- Team: answer box (reply to the employee's questions) ---------- */
+.answer-box { border: 1px solid rgba(227, 179, 65, 0.45); background: rgba(227, 179, 65, 0.06); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.answer-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.answer-head b { font-size: 13px; }
+.answer-item { display: flex; flex-direction: column; gap: 4px; }
+.answer-q { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.5; }
+.answer-n { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; background: var(--warn); color: #1b1b1b; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 2px; }
+.answer-q-text { white-space: pre-wrap; word-break: break-word; min-width: 0; }
+.answer-box textarea.text { width: 100%; min-height: 0; resize: vertical; font-size: 13px; padding: 6px 9px; line-height: 1.45; }
+.answer-actions { align-items: center; gap: 8px; }
+.badge.ask { background: rgba(227, 179, 65, 0.18); color: var(--warn); border: 1px solid rgba(227, 179, 65, 0.4); }
+.review-item { white-space: pre-wrap; word-break: break-word; }
+/* 좁은 폭에서 버튼 글자가 세로로 꺾이지 않게 */
+.team-head button, .task-actions button { white-space: nowrap; flex-shrink: 0; }
+.task-actions { flex-wrap: wrap; }
