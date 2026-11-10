@@ -35,6 +35,7 @@ import * as fb from './firebase'
 import { Resizer } from './components/Resizer'
 import { TeamView } from './team/TeamView'
 import { useTeamStore } from './team/store'
+import { AUTO, legacyToAuto } from '../../shared/models'
 import { EMPTY_RUNTIME, applyEvent, deriveTaskPatch, isActive, type TaskRuntime } from './team/runtime'
 import {
   DEFAULT_LAYOUT,
@@ -57,6 +58,9 @@ type RightTab = 'tools' | 'diff' | 'terminal' | 'browser' | 'files'
 
 /** 마지막 작업 폴더 (다음 실행 때 복원) */
 const CWD_KEY = 'claude-cli-studio.cwd'
+const MODEL_MIGRATED_KEY = 'claude-cli-studio.model-auto-migrated'
+/** 자동 모델 선택이 들어간 시점 (v0.7.5). 이보다 먼저 저장된 직원 설정만 자동 선택으로 옮긴다 */
+const MODEL_AUTO_CUTOFF = Date.UTC(2026, 10, 11)
 
 const EMPTY_TEAM_USAGE: TeamUsage = { runs: 0, numTurns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, durationMs: 0, totalCostUsd: 0 }
 type SettingsTab = 'auth' | 'mcp' | 'skills' | 'update' | 'firebase' | 'memory'
@@ -883,6 +887,27 @@ export default function App() {
     const { hasApiKey: _a, apiKeyHint: _b, hasUpdateToken: _c, ...plain } = config
     await saveConfig({ ...plain, model })
   }
+
+  // 한 번만: 이전 버전의 모델 설정(CLI 기본값, 목록에 고정돼 있던 id)을 자동 선택으로 옮긴다.
+  // 그 뒤로는 사용자가 고른 값(버전 고정·CLI 기본값 포함)을 그대로 둔다
+  useEffect(() => {
+    if (!config || localStorage.getItem(MODEL_MIGRATED_KEY)) return
+    localStorage.setItem(MODEL_MIGRATED_KEY, '1')
+    const next = config.model ? legacyToAuto(config.model) : AUTO
+    if (next) void changeModel(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config])
+  useEffect(() => {
+    const key = `${MODEL_MIGRATED_KEY}.team.${team.backend}`
+    if (team.employees.length === 0 || localStorage.getItem(key)) return
+    localStorage.setItem(key, '1')
+    for (const e of team.employees) {
+      const next = legacyToAuto(e.model)
+      // 이 버전 이후에 일부러 버전을 고정한 직원은 건드리지 않는다
+      if (next && e.updatedAt < MODEL_AUTO_CUTOFF) team.upsertEmployee({ ...e, model: next })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [team.employees, team.backend])
 
   return (
     <div className="app" style={{ gridTemplateColumns: gridColumns }}>

@@ -5,7 +5,8 @@ import { Markdown } from '../components/Markdown'
 import { ToolChip } from '../components/ToolChip'
 import { EmployeeForm, TaskForm } from './TeamForms'
 import { EMPTY_RUNTIME, STATUS_LABEL, isActive, type TaskRuntime } from './runtime'
-import { modelShort } from '../models'
+import { useModelCatalog } from '../models'
+import { modelShort } from '../../../shared/models'
 
 export interface TeamViewProps {
   employees: Employee[]
@@ -57,6 +58,7 @@ const GROUPS: { key: string; label: string; statuses: TeamTask['status'][] }[] =
 ]
 
 export function TeamView(p: TeamViewProps) {
+  const catalog = useModelCatalog()
   const [showEmployeeForm, setShowEmployeeForm] = useState<false | 'new' | Employee>(false)
   const [showTaskForm, setShowTaskForm] = useState<false | { employeeId?: string }>(false)
   const [filterEmployee, setFilterEmployee] = useState<string | null>(null)
@@ -114,7 +116,7 @@ export function TeamView(p: TeamViewProps) {
                     <b>{e.name}</b>
                     <span className="muted small">{e.role}</span>
                     <span className="emp-model" title={e.model || '사이드바의 기본 모델을 따름'}>
-                      {modelShort(e.model)}
+                      {modelShort(e.model, catalog)}
                     </span>
                   </div>
                   <button

@@ -27,7 +27,12 @@ Electron + React + TypeScript로 만들었고, Claude Code 엔진은 공식 **Cl
 - **claude.ai 구독 로그인(기본)**: "터미널에서 로그인 열기" 버튼이 새 콘솔에서 `claude login` 을 실행합니다. Pro/Max 플랜 한도를 쓰고 사이드바에 플랜 사용량이 표시됩니다.
 - **Anthropic API 키**: 키를 입력하면 Windows 자격 증명 저장소(DPAPI)로 암호화해 `%APPDATA%\claude-cli-studio\apikey.bin` 에 보관합니다. 화면에는 끝 4자리만 보입니다. 자식 프로세스에 `ANTHROPIC_API_KEY` 로 전달됩니다.
 - **기본 URL**: 프록시나 호환 게이트웨이를 쓸 때 `ANTHROPIC_BASE_URL` 로 전달됩니다.
-- **모델**: 비우면 CLI 기본값.
+- **모델**: 기본은 **자동**입니다. 계정의 권장 모델 계열에서 가장 새 버전을 요청 직전에 골라 쓰므로, 새 모델이 나오면
+  앱을 고치지 않아도 따라갑니다. "Fable 최신"처럼 계열만 정하거나, 특정 버전으로 고정하거나, "CLI 기본값"으로 둘 수도 있습니다.
+  - 모델 목록은 SDK 가 알려 주는 것을 씁니다. 요청이 정상적으로 끝날 때마다 새 목록으로 바뀌고 `models.json` 에 저장됩니다.
+    그래서 새 모델은 그것이 목록에 처음 잡힌 요청의 **다음 요청부터** 적용됩니다.
+  - 자동 선택이 가리키는 모델이 바뀌면 사이드바의 모델 아래에 "새 모델 적용 A → B" 가 한 번 표시됩니다.
+  - 직원도 같은 선택지를 씁니다. 비워 두면 사이드바 설정을 따릅니다.
 - **Claude Code 설정 상속**: 켜면 `~/.claude` 와 프로젝트 `.claude` 의 settings.json, CLAUDE.md, MCP 서버(`~/.claude.json`, `.mcp.json`), 스킬, 플러그인을 터미널 CLI 와 동일하게 불러옵니다(SDK `settingSources: ['user','project','local']`). 끄면 앱에서 등록한 MCP 서버만 씁니다.
 
 ### MCP 서버

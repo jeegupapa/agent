@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { ModelCatalog } from '../shared/models'
 import type {
   ActiveWork,
   AppConfig,
@@ -84,6 +85,14 @@ const api = {
 
   // 설정
   getConfig: (): Promise<AppConfigView> => ipcRenderer.invoke('config:get'),
+
+  // 사용 가능한 모델 목록 (SDK 가 알려 주는 것). 바뀌면 onModelsChanged 로 알린다
+  getModels: (): Promise<ModelCatalog | null> => ipcRenderer.invoke('models:get'),
+  onModelsChanged: (cb: (c: ModelCatalog) => void): (() => void) => {
+    const handler = (_: unknown, c: ModelCatalog): void => cb(c)
+    ipcRenderer.on('models:changed', handler)
+    return () => ipcRenderer.removeListener('models:changed', handler)
+  },
   setConfig: (config: AppConfig): Promise<AppConfigView> => ipcRenderer.invoke('config:set', config),
   setApiKey: (key: string | null): Promise<AppConfigView> =>
     ipcRenderer.invoke('config:set-api-key', key),

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { EMPLOYEE_PRESETS, type Employee, type PermissionMode, type TeamTask } from '../../../shared/types'
 
-import { MODELS } from '../models'
+import { ModelSelect } from '../models'
 
 const MODES: { value: PermissionMode; label: string; desc: string }[] = [
   { value: 'acceptEdits', label: '편집 자동 승인', desc: '파일 편집은 알아서, 명령 실행은 물어봄 (권장)' },
@@ -123,13 +123,7 @@ export function EmployeeForm(p: {
           <div className="row">
             <label className="field">
               <span>이 직원이 쓸 모델</span>
-              <select className="text" value={draft.model ?? ''} onChange={(e) => set({ model: e.target.value || undefined })}>
-                {MODELS.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.value ? m.label : '기본 모델 (사이드바 설정값)'}
-                  </option>
-                ))}
-              </select>
+              <ModelSelect value={draft.model} emptyLabel="기본 모델 (사이드바 설정값)" emptyFirst onChange={(model) => set({ model })} />
             </label>
             <label className="field">
               <span>기본 작업 폴더 (비우면 작업마다 지정)</span>

@@ -5,6 +5,7 @@ import { homedir, hostname } from 'os'
 import { basename, dirname, extname, join } from 'path'
 import { createRequire } from 'module'
 import { ClaudeRunner } from './claude'
+import { modelCatalog } from './models'
 import { ConfigStore } from './config'
 import { AppUpdater } from './updater'
 import { TeamRunner } from './team'
@@ -301,6 +302,14 @@ function createWindow(): void {
   )
   win.webContents.once('did-finish-load', () => updater?.checkOnStartup())
 
+  // 사용 가능한 모델 목록: 저장해 둔 것을 읽어 두고, 요청이 끝날 때마다 새로 받은 목록으로 바꾼다
+  modelCatalog.init({
+    file: join(app.getPath('userData'), 'models.json'),
+    onChange: (catalog) => {
+      if (!win.isDestroyed()) win.webContents.send('models:changed', catalog)
+    }
+  })
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
@@ -430,6 +439,9 @@ app.whenReady().then(() => {
   ipcMain.handle('app:open-path', (_e, p: string) => shell.openPath(p))
 
   // ----- 설정 -----
+  // ----- 모델 목록 -----
+  ipcMain.handle('models:get', () => modelCatalog.get())
+
   ipcMain.handle('config:get', () => store.view())
   ipcMain.handle('config:set', (_e, config: AppConfig) => {
     store.save(config)

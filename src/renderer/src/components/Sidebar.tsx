@@ -13,7 +13,8 @@ import type {
 import type { PlanUsage } from '../App'
 import { UpdateBanner } from './UpdatePanel'
 import { SessionHistory, type SyncState } from './FirebasePanel'
-import { MODELS } from '../models'
+import { ModelSelect, useModelUpgrade } from '../models'
+import { modelName } from '../../../shared/models'
 import type { FbUser } from '../firebase'
 
 interface Props {
@@ -199,6 +200,8 @@ export function PlanUsageView({ plan, auth, apiKeyMode }: { plan: PlanUsage | nu
 /** 인증·MCP·스킬 연결 상태 요약 */
 function ConnectionView(p: Props) {
   const cfg = p.config
+  // 자동 선택이 지금 가리키는 모델, 그리고 지난번과 달라졌는지
+  const upgrade = useModelUpgrade(cfg?.model)
   const s = p.session
   const a = p.authStatus
   const authLabel = !cfg
@@ -241,19 +244,28 @@ function ConnectionView(p: Props) {
       </div>
       <div className="conn-row" title={s?.model ? `현재 세션: ${s.model}` : '다음 요청부터 적용'}>
         <span>모델</span>
-        <select
+        <ModelSelect
           className="text inline"
-          value={cfg?.model ?? ''}
+          value={cfg?.model}
+          emptyLabel="CLI 기본값"
           disabled={!cfg || p.running}
-          onChange={(e) => p.onModelChange(e.target.value || undefined)}
-        >
-          {MODELS.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </select>
+          onChange={p.onModelChange}
+        />
       </div>
+      {upgrade.now && (
+        <div className="conn-model-now small">
+          {upgrade.from ? (
+            <>
+              <b>새 모델 적용</b> {modelName(upgrade.from)} → {modelName(upgrade.now)}
+              <button className="pbtn" onClick={upgrade.dismiss}>
+                확인
+              </button>
+            </>
+          ) : (
+            <span className="muted">지금 {modelName(upgrade.now)} · 새 버전이 나오면 자동 적용</span>
+          )}
+        </div>
+      )}
       <div className="conn-row">
         <span>MCP 서버</span>
         <b>

@@ -7,6 +7,7 @@ import {
   type SDKMessage
 } from '@anthropic-ai/claude-agent-sdk'
 import type { BrowserWindow } from 'electron'
+import { modelCatalog, type SdkModelInfo } from './models'
 import { randomUUID } from 'crypto'
 import { readFileSync, statSync } from 'fs'
 import { isAbsolute, resolve } from 'path'
@@ -188,6 +189,9 @@ export class ClaudeRunner {
       throw new Error('API 키 모드인데 저장된 키가 없습니다. 연결 설정에서 키를 입력하세요.')
     }
 
+    // 선택값('auto', 'auto:fable' 등)을 지금 쓸 수 있는 가장 새 모델 id 로 바꾼다
+    const model = modelCatalog.resolve(args.model?.trim() || config.model?.trim() || undefined)
+
     const options: Options = {
       cwd: args.cwd,
       resume: args.sessionId,
@@ -197,7 +201,7 @@ export class ClaudeRunner {
       mcpServers: toSdkMcpServers(config),
       // 켜져 있으면 ~/.claude 와 프로젝트 .claude 의 설정·MCP·스킬·CLAUDE.md 를 CLI 처럼 읽는다
       settingSources: config.inheritSettings ? ['user', 'project', 'local'] : [],
-      model: args.model?.trim() || config.model?.trim() || undefined,
+      model,
       // 항상 Claude Code 기본 시스템 프롬프트를 쓰고, 그 뒤에 역할 지시문(직원)·사용자 메모리를 붙인다
       systemPrompt: { type: 'preset', preset: 'claude_code', append: args.systemPromptAppend?.trim() || undefined },
       allowedTools: args.allowedTools,
@@ -231,6 +235,17 @@ export class ClaudeRunner {
 
     const q = query({ prompt: args.prompt, options })
     this.current = q
+    // 이 세션이 알려 주는 사용 가능 모델 목록. 요청이 정상적으로 끝났을 때만 반영한다 (로그인이 풀린 상태에서는
+    // 다른 목록이 오기 때문). 목록만 받으려고 CLI 를 따로 띄웠다 바로 끄면 그 사이 진행 중이던 로그인 토큰 갱신이
+    // 끊겨 로그인이 풀릴 수 있어서, 실제 요청에 얹어서만 받는다
+    let models: SdkModelInfo[] | null = null
+    q.supportedModels()
+      .then((list) => {
+        models = list
+      })
+      .catch(() => {
+        /* 목록을 못 받아도 실행에는 지장이 없다 */
+      })
     this.cwd = args.cwd
     this.editTargets.clear()
     this.emittedTools.clear()
@@ -242,6 +257,7 @@ export class ClaudeRunner {
 
     try {
       for await (const msg of q) {
+        if (msg.type === 'result' && msg.subtype === 'success' && !msg.is_error && models) modelCatalog.update(models)
         this.handleMessage(msg, {
           onText: (delta) => {
             currentText += delta

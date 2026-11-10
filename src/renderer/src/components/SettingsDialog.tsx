@@ -39,7 +39,7 @@ interface Props {
   onClose: () => void
 }
 
-import { MODELS } from '../models'
+import { ModelSelect } from '../models'
 
 function stripView(v: AppConfigView): AppConfig {
   const { hasApiKey: _h, apiKeyHint: _k, ...rest } = v
@@ -319,17 +319,7 @@ function AuthTab(p: {
       </label>
       <label className="field">
         <span>모델</span>
-        <select
-          className="text"
-          value={draft.model ?? ''}
-          onChange={(e) => p.onChange({ ...draft, model: e.target.value || undefined })}
-        >
-          {MODELS.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </select>
+        <ModelSelect value={draft.model} emptyLabel="CLI 기본값" onChange={(model) => p.onChange({ ...draft, model })} />
       </label>
       <label className="check">
         <input
