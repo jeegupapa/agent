@@ -53,6 +53,10 @@ export function parseDispatchPlan(text: string): DispatchPlan {
  */
 export class TeamRunner {
   private runners = new Map<string, ClaudeRunner>()
+  /** 실행 중인 작업 → 실행이 끝날 때 풀리는 약속 */
+  private ending = new Map<string, Promise<void>>()
+  /** 중단을 요청해 끝나는 중인 작업. 중단 직후 "이어서"를 누르면 끝나기를 기다렸다 시작한다 */
+  private stopping = new Map<string, Promise<void>>()
   /** 팀장이 배분 중인 요청 수 */
   private dispatching = 0
 
@@ -87,18 +91,26 @@ export class TeamRunner {
 
   /** 첫 지시 또는 수정 요청 프롬프트 */
   static prompt(args: TeamStartArgs): string {
-    if (args.followUp) return args.followUp
+    // 조율하는 역할(PM 등)에게는 지금 팀이 하고 있는 일을 함께 알려 준다
+    const status = args.teamStatus?.trim() ? `\n\n${args.teamStatus.trim()}` : ''
+    if (args.followUp) return args.followUp + status
     const t = args.task
-    return `# 작업: ${t.title}\n\n${t.instructions.trim()}\n\n작업 폴더: ${t.cwd}`
+    return `# 작업: ${t.title}\n\n${t.instructions.trim()}\n\n작업 폴더: ${t.cwd}${status}`
   }
 
   async start(args: TeamStartArgs): Promise<void> {
     const taskId = args.task.id
-    if (this.runners.has(taskId)) throw new Error('이미 실행 중인 작업입니다.')
+    if (this.runners.has(taskId)) {
+      const ending = this.stopping.get(taskId)
+      if (!ending) throw new Error('이미 실행 중인 작업입니다.')
+      await ending
+    }
 
     const sink: RunnerSink = {
       emit: (event: ClaudeEvent) => {
-        if (!this.win.isDestroyed()) this.win.webContents.send('team:event', { taskId, event })
+        if (!this.win.isDestroyed()) {
+          this.win.webContents.send('team:event', { taskId, event, afterStop: this.stopping.has(taskId) || undefined })
+        }
       },
       requestPermission: (req) => {
         if (this.win.isDestroyed()) return
@@ -111,6 +123,8 @@ export class TeamRunner {
     }
     const runner = new ClaudeRunner(this.win, this.getConfig, sink)
     this.runners.set(taskId, runner)
+    let ended: () => void = () => {}
+    this.ending.set(taskId, new Promise<void>((r) => (ended = r)))
     try {
       await runner.run({
         prompt: TeamRunner.prompt(args),
@@ -119,10 +133,14 @@ export class TeamRunner {
         sessionId: args.followUp ? args.task.sessionId : undefined,
         permissionMode: args.employee.permissionMode,
         systemPromptAppend: TeamRunner.systemPrompt(args),
-        model: args.employee.model
+        model: args.employee.model,
+        effort: args.employee.effort
       })
     } finally {
       this.runners.delete(taskId)
+      this.stopping.delete(taskId)
+      this.ending.delete(taskId)
+      ended()
     }
   }
 
@@ -143,7 +161,10 @@ ${emps}
 맞는 직원이 없으면 presetRole 에 아래 직함을 그대로 적으세요. 자동으로 채용됩니다.
 ${presets}
 
-${args.memory ? `${args.memory.trim()}\n\n` : ''}# 배분 규칙
+${args.teamStatus?.trim() ? `${args.teamStatus.trim()}\n\n` : ''}${args.memory ? `${args.memory.trim()}\n\n` : ''}# 배분 규칙
+- "팀 작업 현황"이 위에 있으면 그것은 이 요청을 받은 시점의 실제 상태입니다. 진행 상황, 누가 무엇을 하는지, 결과를 묻는 요청이면 새 작업을 만들지 말고 그 현황을 근거로 directAnswer 에 직접 답하세요. 현황에 없는 내용은 지어내지 마세요.
+- 이미 진행 중이거나 검토를 기다리는 작업과 겹치는 일은 새로 만들지 말고, 그 작업이 있다는 것을 directAnswer 나 summary 로 알려 주세요.
+- 같은 역할의 직원이 여럿이면 지금 작업 중이 아닌 직원에게 먼저 맡기세요.
 - 요청이 단순 질문·대화·의견이라 직원에게 맡길 일이 아니면 assignments 를 빈 배열로 두고 directAnswer 에 직접 답하세요.
 - 역할이 다른 일은 작업을 나눌 수 있습니다 (예: 구현 → 프론트엔드 개발자, 검증 → QA 엔지니어). 단, 작업들은 동시에 실행되므로 서로의 결과에 의존하는 일은 한 작업으로 합치세요.
 - 보통 1~3개 작업이면 충분합니다. 불필요하게 쪼개지 마세요.
@@ -202,7 +223,20 @@ ${args.memory ? `${args.memory.trim()}\n\n` : ''}# 배분 규칙
   }
 
   async stop(taskId: string): Promise<void> {
-    await this.runners.get(taskId)?.interrupt()
+    const runner = this.runners.get(taskId)
+    if (!runner) return
+    const ending = this.ending.get(taskId)
+    if (ending) this.stopping.set(taskId, ending)
+    await runner.interrupt()
+  }
+
+  /** 직원 작업 세션 안에서 돌고 있는 작업 하나(백그라운드 셸·서브에이전트)를 멈춘다 */
+  async stopBgTask(taskId: string, bgTaskId: string): Promise<void> {
+    await this.runners.get(taskId)?.stopBgTask(bgTaskId)
+  }
+
+  async sendToBackground(taskId: string, toolUseId?: string): Promise<boolean> {
+    return (await this.runners.get(taskId)?.sendToBackground(toolUseId)) ?? false
   }
 
   /** requestId 가 속한 러너를 찾아 답을 전달한다. 처리했으면 true */

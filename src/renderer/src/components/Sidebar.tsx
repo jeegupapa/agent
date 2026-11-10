@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
-import type {
-  AppConfigView,
-  AuthStatus,
-  PermissionMode,
-  PlanWindow,
-  SavedSessionMeta,
-  SessionInfo,
-  TeamUsage,
-  UpdateStatus,
-  UsageSummary
+import {
+  EFFORT_LEVELS,
+  type AppConfigView,
+  type AuthStatus,
+  type EffortLevel,
+  type PermissionMode,
+  type PlanWindow,
+  type SavedSessionMeta,
+  type SessionInfo,
+  type TeamUsage,
+  type UpdateStatus,
+  type UsageSummary
 } from '../../../shared/types'
 import type { PlanUsage } from '../App'
 import { UpdateBanner } from './UpdatePanel'
@@ -49,6 +51,8 @@ interface Props {
   onPermissionModeChange: (mode: PermissionMode) => void
   /** 기본 모델 변경 (설정에 저장) */
   onModelChange: (model: string | undefined) => void
+  /** 추론 노력 변경 (설정에 저장). undefined 면 모델 기본값 */
+  onEffortChange: (effort: EffortLevel | undefined) => void
   onOpenSettings: (tab: 'auth' | 'mcp' | 'skills' | 'update' | 'firebase' | 'memory') => void
   /** 대화·보고서 내용 검색 열기 (Ctrl+K) */
   onOpenSearch: () => void
@@ -251,6 +255,26 @@ function ConnectionView(p: Props) {
           disabled={!cfg || p.running}
           onChange={p.onModelChange}
         />
+      </div>
+      <div
+        className="conn-row"
+        data-effort={s?.effort ?? ''}
+        title={`모델이 답하기 전에 얼마나 깊이 생각할지. 높을수록 꼼꼼하지만 느리고 사용량이 늘어납니다. 다음 요청부터 적용${s?.effort ? ` · 현재 세션: ${s.effort}` : ''}`}
+      >
+        <span>노력</span>
+        <select
+          className="text inline"
+          value={cfg?.effort ?? ''}
+          disabled={!cfg || p.running}
+          onChange={(e) => p.onEffortChange((e.target.value || undefined) as EffortLevel | undefined)}
+        >
+          <option value="">모델 기본값</option>
+          {EFFORT_LEVELS.map((l) => (
+            <option key={l.value} value={l.value}>
+              {l.label} ({l.value})
+            </option>
+          ))}
+        </select>
       </div>
       {upgrade.now && (
         <div className="conn-model-now small">

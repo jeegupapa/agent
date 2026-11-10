@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { EMPLOYEE_PRESETS, type Employee, type PermissionMode, type TeamTask } from '../../../shared/types'
+import { EFFORT_LEVELS, EMPLOYEE_PRESETS, type EffortLevel, type Employee, type PermissionMode, type TeamTask } from '../../../shared/types'
+import { isTeamAware } from './status'
 
 import { ModelSelect } from '../models'
 
@@ -126,6 +127,17 @@ export function EmployeeForm(p: {
               <ModelSelect value={draft.model} emptyLabel="기본 모델 (사이드바 설정값)" emptyFirst onChange={(model) => set({ model })} />
             </label>
             <label className="field">
+              <span>노력 (생각의 깊이)</span>
+              <select className="text" value={draft.effort ?? ''} onChange={(e) => set({ effort: (e.target.value || undefined) as EffortLevel | undefined })}>
+                <option value="">사이드바 설정값</option>
+                {EFFORT_LEVELS.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label} ({l.value})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
               <span>기본 작업 폴더 (비우면 작업마다 지정)</span>
               <div className="row">
                 <input
@@ -160,6 +172,10 @@ export function EmployeeForm(p: {
               </label>
             ))}
           </div>
+          <label className="check" title="PM 처럼 다른 직원의 일을 조율하는 역할에 켭니다. 작업을 시작할 때 누가 무엇을 하고 있는지, 최근에 무엇이 끝났는지가 지시와 함께 전달됩니다">
+            <input type="checkbox" checked={isTeamAware(draft)} onChange={(e) => set({ teamAware: e.target.checked })} />
+            <span>작업을 시작할 때 팀 전체의 작업 현황을 함께 알려 주기</span>
+          </label>
         </div>
         <div className="modal-actions settings-foot">
           <span className="row">

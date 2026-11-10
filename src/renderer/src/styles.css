@@ -746,3 +746,41 @@ button.pbtn.accent:hover:not(:disabled) { color: var(--text); background: rgba(2
 /* 모델 자동 선택: 지금 적용된 모델 / 새 모델 알림 */
 .conn-model-now { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; text-align: right; margin-top: -2px; }
 .conn-model-now b { color: var(--accent); }
+
+/* 직원 카드의 작은 버튼 줄 */
+.emp-card .row { flex-wrap: wrap; gap: 4px; }
+.small-btn.danger { border-color: var(--err); color: var(--err); background: transparent; }
+
+/* 오른쪽 패널: 백그라운드 작업 */
+.bg-panel { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 16px; }
+.bg-panel h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.bg-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bg-work { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; }
+.bg-work.clickable { cursor: pointer; }
+.bg-work.clickable:hover { border-color: var(--muted); }
+.bg-work-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bg-work-main b, .bg-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.bg-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
+.bg-dot.running { background: var(--warn); animation: bg-pulse 1.2s ease-in-out infinite; }
+.bg-dot.completed { background: var(--ok); }
+.bg-dot.failed { background: var(--err); }
+@keyframes bg-pulse { 50% { opacity: 0.35; } }
+.bg-scope { margin-bottom: 10px; }
+.bg-scope-label { color: var(--muted); margin-bottom: 4px; }
+.bg-task { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
+.bg-task-head { display: flex; align-items: center; gap: 8px; }
+.bg-desc { flex: 1; min-width: 0; }
+.bg-status { font-size: 11px; color: var(--muted); flex: none; }
+.bg-status.running { color: var(--warn); }
+.bg-status.completed { color: var(--ok); }
+.bg-status.failed { color: var(--err); }
+.bg-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.bg-meta .warn { color: var(--warn); }
+.bg-summary { white-space: pre-wrap; word-break: break-word; }
+.bg-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.bg-actions:empty { display: none; }
+.pbtn.danger { border-color: var(--err); color: var(--err); }
+.bg-output { max-height: 260px; overflow: auto; font-size: 11px; margin: 0; white-space: pre-wrap; word-break: break-all; }
+
+/* 오른쪽 패널 탭이 6개라 폭을 글자 수에 맞춘다 */
+.right .tabs button { flex: 1 1 auto; padding: 10px 6px; }

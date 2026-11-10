@@ -13,6 +13,7 @@ import { readFileSync, statSync } from 'fs'
 import { isAbsolute, resolve } from 'path'
 import type {
   AppConfig,
+  BgTask,
   ClaudeEvent,
   PermissionAnswer,
   PermissionRequest,
@@ -135,6 +136,8 @@ export class ClaudeRunner {
   private cwd = ''
   /** 이미 tool_start 를 보낸 도구 id (stream_event 와 assistant 메시지 중복 방지) */
   private emittedTools = new Set<string>()
+  /** 이 실행에서 아직 끝나지 않은 작업(백그라운드 셸·서브에이전트 등)의 task id */
+  private liveTasks = new Set<string>()
 
   private sink: RunnerSink
 
@@ -172,6 +175,16 @@ export class ClaudeRunner {
     }
   }
 
+  /** 세션 안에서 돌고 있는 작업 하나를 멈춘다 (백그라운드 셸, 서브에이전트 등) */
+  async stopBgTask(taskId: string): Promise<void> {
+    await this.current?.stopTask(taskId)
+  }
+
+  /** 도구 호출이 끝나기를 기다리고 있는 작업을 백그라운드로 보낸다 (터미널의 Ctrl+B 와 같다) */
+  async sendToBackground(toolUseId?: string): Promise<boolean> {
+    return (await this.current?.backgroundTasks(toolUseId)) ?? false
+  }
+
   async interrupt(): Promise<void> {
     if (this.current) {
       try {
@@ -202,6 +215,8 @@ export class ClaudeRunner {
       // 켜져 있으면 ~/.claude 와 프로젝트 .claude 의 설정·MCP·스킬·CLAUDE.md 를 CLI 처럼 읽는다
       settingSources: config.inheritSettings ? ['user', 'project', 'local'] : [],
       model,
+      // 추론 노력: 요청(직원 설정) → 앱 설정 → 모델 기본값
+      effort: args.effort ?? config.effort,
       // 항상 Claude Code 기본 시스템 프롬프트를 쓰고, 그 뒤에 역할 지시문(직원)·사용자 메모리를 붙인다
       systemPrompt: { type: 'preset', preset: 'claude_code', append: args.systemPromptAppend?.trim() || undefined },
       allowedTools: args.allowedTools,
@@ -249,6 +264,7 @@ export class ClaudeRunner {
     this.cwd = args.cwd
     this.editTargets.clear()
     this.emittedTools.clear()
+    this.liveTasks.clear()
 
     // stream_event 에서 현재 조립 중인 블록을 추적한다. 키는 "부모 도구 id:블록 index"
     // (서브에이전트가 병렬로 돌면 index 가 겹치므로)
@@ -274,6 +290,9 @@ export class ClaudeRunner {
       this.emit({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
     } finally {
       this.current = null
+      // 세션이 끝나면 그 안에서 돌던 작업도 함께 끝난다
+      for (const id of this.liveTasks) this.emit({ kind: 'bg_task', id, patch: { status: 'stopped', endedAt: Date.now() } })
+      this.liveTasks.clear()
       // 실행이 끝났는데 남은 요청이 있으면 더는 답할 수 없으므로 정리한다
       for (const [requestId, pending] of this.pendingPermissions) {
         pending.resolve({ requestId, allow: false })
@@ -319,13 +338,31 @@ export class ClaudeRunner {
               slashCommands: msg.slash_commands ?? [],
               skills: msg.skills ?? [],
               plugins: msg.plugins ?? [],
-              claudeCodeVersion: msg.claude_code_version
+              claudeCodeVersion: msg.claude_code_version,
+              effort: msg.effort ?? undefined
             }
           })
         } else if (msg.subtype === 'status') {
           const s = (msg as { status?: string | null }).status
           this.emit({ kind: 'status', text: s ? String(s) : '' })
         } else if (msg.subtype === 'task_started') {
+          if (!msg.ambient && !msg.skip_transcript) {
+            this.liveTasks.add(msg.task_id)
+            this.emit({
+              kind: 'bg_task',
+              id: msg.task_id,
+              patch: {
+                id: msg.task_id,
+                type: msg.task_type,
+                description: msg.description,
+                subagentType: msg.subagent_type,
+                toolUseId: msg.tool_use_id,
+                background: msg.is_backgrounded === true,
+                status: 'running',
+                startedAt: Date.now()
+              }
+            })
+          }
           if (msg.tool_use_id && !msg.skip_transcript) {
             this.emit({
               kind: 'subagent_info',
@@ -339,6 +376,16 @@ export class ClaudeRunner {
             })
           }
         } else if (msg.subtype === 'task_progress') {
+          if (this.liveTasks.has(msg.task_id)) {
+            const patch: Partial<BgTask> = {
+              lastTool: msg.last_tool_name,
+              totalTokens: msg.usage?.total_tokens,
+              toolUses: msg.usage?.tool_uses,
+              durationMs: msg.usage?.duration_ms
+            }
+            if (msg.summary) patch.summary = msg.summary
+            this.emit({ kind: 'bg_task', id: msg.task_id, patch })
+          }
           if (msg.tool_use_id) {
             const info: SubagentInfo = {
               description: msg.description,
@@ -351,7 +398,29 @@ export class ClaudeRunner {
             if (msg.summary) info.summary = msg.summary
             this.emit({ kind: 'subagent_info', parentId: msg.tool_use_id, info })
           }
+        } else if (msg.subtype === 'task_updated') {
+          if (this.liveTasks.has(msg.task_id)) {
+            const patch: Partial<BgTask> = {}
+            if (msg.patch.is_backgrounded !== undefined) patch.background = msg.patch.is_backgrounded
+            if (msg.patch.description) patch.description = msg.patch.description
+            if (Object.keys(patch).length) this.emit({ kind: 'bg_task', id: msg.task_id, patch })
+          }
         } else if (msg.subtype === 'task_notification') {
+          if (this.liveTasks.delete(msg.task_id)) {
+            this.emit({
+              kind: 'bg_task',
+              id: msg.task_id,
+              patch: {
+                status: msg.status,
+                endedAt: Date.now(),
+                summary: msg.summary || undefined,
+                outputFile: msg.output_file || undefined,
+                totalTokens: msg.usage?.total_tokens,
+                toolUses: msg.usage?.tool_uses,
+                durationMs: msg.usage?.duration_ms
+              }
+            })
+          }
           if (msg.tool_use_id && !msg.skip_transcript) {
             this.emit({
               kind: 'subagent_info',

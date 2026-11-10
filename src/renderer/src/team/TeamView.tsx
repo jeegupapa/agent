@@ -27,6 +27,11 @@ export interface TeamViewProps {
   onStartTask: (task: TeamTask) => void
   onRerunTask: (task: TeamTask) => void
   onStopTask: (id: string) => void
+  /** 중단된 작업을 같은 세션에서 이어서 진행 */
+  onResumeTask: (task: TeamTask) => void
+  /** 직원 한 명의 진행 중인 작업을 모두 중단 / 중단된 작업을 모두 이어서 진행 */
+  onStopEmployee: (employeeId: string) => void
+  onResumeEmployee: (employeeId: string) => void
   onDeleteTask: (id: string) => void
   onReview: (id: string, decision: ReviewDecision, comment: string) => void
   onSelectTool: (id: string) => void
@@ -103,6 +108,7 @@ export function TeamView(p: TeamViewProps) {
             const mine = p.tasks.filter((t) => t.employeeId === e.id)
             const working = mine.filter((t) => isActive(t.status)).length
             const waiting = mine.filter((t) => t.status === 'needs_review' || t.status === 'waiting_permission').length
+            const stopped = mine.filter((t) => t.status === 'stopped')
             return (
               <div
                 key={e.id}
@@ -148,6 +154,31 @@ export function TeamView(p: TeamViewProps) {
                   >
                     작업 지시
                   </button>
+                  {working > 0 && (
+                    <button
+                      className="small-btn danger"
+                      title="이 직원이 하고 있는 작업을 모두 중단합니다. 나중에 이어서 진행할 수 있습니다"
+                      onClick={(ev) => {
+                        ev.stopPropagation()
+                        p.onStopEmployee(e.id)
+                      }}
+                    >
+                      ⏸ 중단
+                    </button>
+                  )}
+                  {stopped.length > 0 && (
+                    <button
+                      className="small-btn"
+                      title="이 직원의 중단된 작업을 같은 세션에서 이어서 진행합니다"
+                      onClick={(ev) => {
+                        ev.stopPropagation()
+                        const names = stopped.map((t) => `· ${t.title}`).join('\n')
+                        if (stopped.length === 1 || confirm(`${e.name}의 중단된 작업 ${stopped.length}개를 이어서 진행할까요?\n${names}`)) p.onResumeEmployee(e.id)
+                      }}
+                    >
+                      ▶ 이어서{stopped.length > 1 ? ` ${stopped.length}` : ''}
+                    </button>
+                  )}
                 </div>
               </div>
             )
@@ -221,6 +252,7 @@ export function TeamView(p: TeamViewProps) {
               elsewhere={selected.runHost && p.hostname && selected.runHost !== p.hostname ? selected.runHost : undefined}
               onRecheckPermissions={p.onRecheckPermissions}
               onStop={() => p.onStopTask(selected.id)}
+              onResume={() => p.onResumeTask(selected)}
               onRerun={() => p.onRerunTask(selected)}
               onDelete={() => {
                 if (confirm(`"${selected.title}" 작업을 삭제할까요?`)) {
@@ -281,6 +313,7 @@ function TaskDetail(p: {
   elsewhere?: string
   onRecheckPermissions: () => void
   onStop: () => void
+  onResume: () => void
   onRerun: () => void
   onDelete: () => void
   onReview: (decision: ReviewDecision, comment: string) => void
@@ -448,6 +481,11 @@ function TaskDetail(p: {
         {active && (
           <button className="danger" onClick={p.onStop}>
             중단
+          </button>
+        )}
+        {t.status === 'stopped' && (
+          <button className="primary" onClick={p.onResume} title={t.sessionId ? '중단된 곳에서 같은 세션으로 이어서 진행합니다' : '세션이 만들어지기 전에 중단되어 처음부터 시작합니다'}>
+            ▶ 이어서 진행
           </button>
         )}
         {(t.status === 'failed' || t.status === 'stopped') && (

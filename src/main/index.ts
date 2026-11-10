@@ -347,6 +347,15 @@ app.whenReady().then(() => {
   ipcMain.handle('claude:interrupt', async () => {
     await runner?.interrupt()
   })
+  // 세션 안에서 돌고 있는 작업(백그라운드 셸·서브에이전트): 멈추기 / 백그라운드로 보내기. scope 는 'chat' 또는 팀 작업 id
+  ipcMain.handle('claude:stop-bg-task', async (_e, scope: string, bgTaskId: string) => {
+    if (scope === 'chat') await runner?.stopBgTask(bgTaskId)
+    else await team?.stopBgTask(scope, bgTaskId)
+  })
+  ipcMain.handle('claude:send-to-background', async (_e, scope: string, toolUseId?: string) => {
+    if (scope === 'chat') return (await runner?.sendToBackground(toolUseId)) ?? false
+    return (await team?.sendToBackground(scope, toolUseId)) ?? false
+  })
   ipcMain.on('claude:permission-answer', (_e, answer: PermissionAnswer) => {
     // 팀 작업의 요청이면 그쪽 러너가 받고, 아니면 메인 채팅 러너
     if (!team?.answerPermission(answer)) runner?.answerPermission(answer)

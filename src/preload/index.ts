@@ -30,6 +30,11 @@ const api = {
   // Claude 실행
   send: (args: SendPromptArgs): Promise<void> => ipcRenderer.invoke('claude:send', args),
   interrupt: (): Promise<void> => ipcRenderer.invoke('claude:interrupt'),
+  /** 세션 안의 작업(백그라운드 셸·서브에이전트) 멈추기. scope 는 'chat' 또는 팀 작업 id */
+  stopBgTask: (scope: string, bgTaskId: string): Promise<void> => ipcRenderer.invoke('claude:stop-bg-task', scope, bgTaskId),
+  /** 도구 호출이 끝나기를 기다리는 작업을 백그라운드로 보낸다 */
+  sendToBackground: (scope: string, toolUseId?: string): Promise<boolean> =>
+    ipcRenderer.invoke('claude:send-to-background', scope, toolUseId),
   answerPermission: (answer: PermissionAnswer): void =>
     ipcRenderer.send('claude:permission-answer', answer),
   onEvent: (cb: (ev: ClaudeEvent) => void): (() => void) => {

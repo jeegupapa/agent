@@ -4,6 +4,8 @@ import type {
   AppConfigView,
   Attachment,
   AuthStatus,
+  BgTask,
+  EffortLevel,
   ClaudeEvent,
   Employee,
   TeamTask,
@@ -34,6 +36,8 @@ import type { SyncState } from './components/FirebasePanel'
 import * as fb from './firebase'
 import { Resizer } from './components/Resizer'
 import { TeamView } from './team/TeamView'
+import { BackgroundPanel, visibleBgTasks, type BgScope } from './components/BackgroundPanel'
+import { isTeamAware, renderTeamStatus } from './team/status'
 import { useTeamStore } from './team/store'
 import { AUTO, legacyToAuto } from '../../shared/models'
 import { EMPTY_RUNTIME, applyEvent, deriveTaskPatch, isActive, type TaskRuntime } from './team/runtime'
@@ -54,7 +58,11 @@ export interface PlanUsage {
   updatedAt: number
 }
 
-type RightTab = 'tools' | 'diff' | 'terminal' | 'browser' | 'files'
+type RightTab = 'tools' | 'diff' | 'tasks' | 'terminal' | 'browser' | 'files'
+
+/** 중단된 작업을 같은 세션에서 이어 갈 때 보내는 지시 */
+const RESUME_PROMPT =
+  '# 작업 재개\n\n중단됐던 작업을 이어서 진행하세요. 이미 끝낸 부분은 다시 하지 말고, 먼저 지금 파일 상태를 확인한 뒤 남은 부분을 마무리하세요. 끝나면 "## 보고" 형식으로 보고하세요.'
 
 /** 마지막 작업 폴더 (다음 실행 때 복원) */
 const CWD_KEY = 'claude-cli-studio.cwd'
@@ -107,6 +115,17 @@ export default function App() {
   // 작업별 실시간 트랜스크립트. ref 에 두고 버전 카운터로 다시 그린다 (이벤트 핸들러 클로저 문제 회피)
   const runtimeRef = useRef<Record<string, TaskRuntime>>({})
   const [, setRuntimeVersion] = useState(0)
+  // 세션 안에서 따로 도는 작업(백그라운드 셸·서브에이전트). scope 는 'chat' 또는 팀 작업 id
+  const [bgTasks, setBgTasks] = useState<Record<string, Record<string, BgTask>>>({})
+  const applyBgTask = useCallback((scope: string, id: string, patch: Partial<BgTask>): void => {
+    setBgTasks((all) => {
+      const prev = all[scope]?.[id]
+      // 시작 이벤트를 못 본 작업의 뒤늦은 갱신은 버린다
+      if (!prev && !patch.id) return all
+      const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+      return { ...all, [scope]: { ...(all[scope] ?? {}), [id]: { ...(prev ?? {}), ...defined } as BgTask } }
+    })
+  }, [])
   const [rightTab, setRightTab] = useState<RightTab>('tools')
   const [selectedTool, setSelectedTool] = useState<string | null>(null)
   const [insertRequest, setInsertRequest] = useState<{ text: string; nonce: number } | null>(null)
@@ -253,7 +272,7 @@ export default function App() {
 
   // 작업 이벤트 → 런타임 + 작업 레코드
   useEffect(() => {
-    return window.api.onTeamEvent(({ taskId, event }) => {
+    return window.api.onTeamEvent(({ taskId, event, afterStop }) => {
       // 플랜 한도는 계정 전체 값이라 직원·팀장 세션에서 온 것도 그대로 반영한다
       if (event.kind === 'rate_limit') {
         setPlan({ windows: event.windows, isUsingOverage: event.isUsingOverage, updatedAt: event.updatedAt })
@@ -279,13 +298,19 @@ export default function App() {
       }
       // 팀장 세션은 사용량만 집계하고 작업 목록에는 넣지 않는다
       if (taskId === DISPATCH_TASK_ID) return
+      if (event.kind === 'bg_task') {
+        applyBgTask(taskId, event.id, event.patch)
+        return
+      }
+      // 중단을 누른 뒤에 도착한 종료 이벤트는 작업 상태를 바꾸지 않는다 (이미 "중단됨"이거나, 곧바로 이어서 시작했을 수 있다)
+      if (afterStop && (event.kind === 'result' || event.kind === 'error')) return
       const prev = runtimeRef.current[taskId] ?? EMPTY_RUNTIME
       const next = applyEvent(prev, event)
       runtimeRef.current = { ...runtimeRef.current, [taskId]: next }
       setRuntimeVersion((v) => v + 1)
       patchTaskRef.current(taskId, (t) => deriveTaskPatch(t, event, next) ?? {})
     })
-  }, [])
+  }, [applyBgTask])
 
   // 대기 중인 권한 요청이 있는 팀 작업은 "승인 필요" 로 표시
   useEffect(() => {
@@ -346,12 +371,17 @@ export default function App() {
    * 작업 시작. opts.stay 면 팀 화면으로 전환하지 않고(채팅에서 배분한 작업), opts.employee 로
    * 방금 채용해 아직 team.employees 에 반영되지 않은 직원을 넘길 수 있다.
    */
-  const startTask = (task: TeamTask, followUp?: string, opts: { stay?: boolean; employee?: Employee } = {}): void => {
+  const startTask = (
+    task: TeamTask,
+    followUp?: string,
+    opts: { stay?: boolean; employee?: Employee; resume?: boolean } = {}
+  ): void => {
     const employee = opts.employee ?? team.employees.find((e) => e.id === task.employeeId)
     if (!employee) return
     const started: TeamTask = {
       ...task,
-      status: followUp ? 'changes_requested' : 'running',
+      // 중단됐던 작업을 이어 가는 것은 수정 요청이 아니므로 "작업 중"으로 표시한다
+      status: followUp && !opts.resume ? 'changes_requested' : 'running',
       startedAt: followUp ? task.startedAt ?? Date.now() : Date.now(),
       finishedAt: undefined,
       error: undefined,
@@ -361,7 +391,7 @@ export default function App() {
     }
     team.upsertTask(started)
     const prevRt = followUp ? runtimeRef.current[task.id] ?? EMPTY_RUNTIME : EMPTY_RUNTIME
-    const userText = followUp ?? `# ${task.title}\n\n${task.instructions}`
+    const userText = opts.resume ? '▶ 중단된 작업을 이어서 진행' : (followUp ?? `# ${task.title}\n\n${task.instructions}`)
     runtimeRef.current = {
       ...runtimeRef.current,
       [task.id]: { ...prevRt, streamingId: null, items: [...prevRt.items, { id: `u-${Date.now()}`, type: 'user', text: userText }] }
@@ -369,10 +399,35 @@ export default function App() {
     setRuntimeVersion((v) => v + 1)
     if (!opts.stay) setMode('team')
     window.api
-      .teamStart({ task: started, employee, followUp, memory: memoryText })
+      .teamStart({
+        task: started,
+        employee,
+        followUp,
+        memory: memoryText,
+        // PM 처럼 조율하는 직원에게는 지금 팀이 하고 있는 일을 함께 알려 준다
+        teamStatus: isTeamAware(employee) ? renderTeamStatus(team.employees, team.tasks, Date.now(), task.id) : undefined
+      })
       .catch((err) => {
         patchTaskRef.current(task.id, { status: 'failed', finishedAt: Date.now(), error: err instanceof Error ? err.message : String(err) })
       })
+  }
+
+  const stopTask = (id: string): void => {
+    void window.api.teamStop(id)
+    patchTaskRef.current(id, { status: 'stopped', finishedAt: Date.now() })
+  }
+  /** 중단된 작업을 이어서 진행. 세션이 남아 있으면 그 세션에서, 없으면(시작 직후 중단) 처음부터 */
+  const resumeTask = (t: TeamTask, opts: { stay?: boolean } = {}): void => {
+    if (t.sessionId) startTask(t, RESUME_PROMPT, { resume: true, stay: opts.stay })
+    else startTask({ ...t, sessionId: undefined }, undefined, { stay: opts.stay })
+  }
+  /** 직원 한 명의 진행 중인 작업을 모두 중단 */
+  const stopEmployee = (employeeId: string): void => {
+    for (const t of team.tasks) if (t.employeeId === employeeId && isActive(t.status)) stopTask(t.id)
+  }
+  /** 직원 한 명의 중단된 작업을 모두 이어서 진행 */
+  const resumeEmployee = (employeeId: string): void => {
+    for (const t of team.tasks) if (t.employeeId === employeeId && t.status === 'stopped') resumeTask(t, { stay: true })
   }
 
   const reviewTask = (id: string, decision: ReviewDecision, comment: string): void => {
@@ -425,7 +480,9 @@ export default function App() {
         cwd,
         employees: team.employees.map(({ id, name, role, specialty }) => ({ id, name, role, specialty })),
         model: config?.model || undefined,
-        memory: memoryText
+        memory: memoryText,
+        // 팀장이 지금 누가 무엇을 하고 있는지 알고 답하거나 배분하도록 현황을 함께 보낸다
+        teamStatus: renderTeamStatus(team.employees, team.tasks) || undefined
       })
       if (plan.assignments.length === 0) {
         setItems((prev) => [
@@ -512,6 +569,22 @@ export default function App() {
   })()
   // 오른쪽 패널에 보여줄 도구 호출: 팀 모드면 선택한 작업의 것
   const panelCalls = mode === 'team' ? (selectedTaskId ? runtimeRef.current[selectedTaskId]?.toolCalls ?? [] : []) : toolCalls
+
+  // 백그라운드 탭: 세션별 작업 목록과, 탭 제목에 붙일 "지금 돌고 있는 것" 수
+  const bgScopes: BgScope[] = Object.entries(bgTasks).map(([scope, tasks]) => {
+    const t = scope === 'chat' ? undefined : team.tasks.find((x) => x.id === scope)
+    const e = t ? team.employees.find((x) => x.id === t.employeeId) : undefined
+    return {
+      scope,
+      label: scope === 'chat' ? '채팅 세션' : `${e?.emoji ?? '❔'} ${e?.name ?? '삭제된 직원'} · ${t?.title ?? '삭제된 작업'}`,
+      live: scope === 'chat' ? running : !!t && isActive(t.status),
+      tasks: Object.values(tasks).sort((a, b) => b.startedAt - a.startedAt)
+    }
+  })
+  const bgRunning =
+    (running ? 1 : 0) +
+    team.tasks.filter((t) => isActive(t.status)).length +
+    bgScopes.reduce((n, s) => n + visibleBgTasks(s.tasks).filter((t) => t.status === 'running' && t.background).length, 0)
 
   // 대화 내용이 바뀌면 저장 대상이 된다 (일반 답변, 팀장 배분·보고 카드, 메모리 안내 등 모두)
   useEffect(() => {
@@ -693,6 +766,9 @@ export default function App() {
           })
         )
         break
+      case 'bg_task':
+        applyBgTask('chat', ev.id, ev.patch)
+        break
       case 'rate_limit':
         setPlan({ windows: ev.windows, isUsingOverage: ev.isUsingOverage, updatedAt: ev.updatedAt })
         break
@@ -809,6 +885,7 @@ export default function App() {
 
   const newSession = (): void => {
     if (running) return
+    setBgTasks(({ chat: _chat, ...rest }) => rest)
     setSessionId(undefined)
     setSession(null)
     setItems([])
@@ -888,6 +965,12 @@ export default function App() {
     await saveConfig({ ...plain, model })
   }
 
+  const changeEffort = async (effort: EffortLevel | undefined): Promise<void> => {
+    if (!config) return
+    const { hasApiKey: _a, apiKeyHint: _b, hasUpdateToken: _c, ...plain } = config
+    await saveConfig({ ...plain, effort })
+  }
+
   // 한 번만: 이전 버전의 모델 설정(CLI 기본값, 목록에 고정돼 있던 id)을 자동 선택으로 옮긴다.
   // 그 뒤로는 사용자가 고른 값(버전 고정·CLI 기본값 포함)을 그대로 둔다
   useEffect(() => {
@@ -941,6 +1024,7 @@ export default function App() {
         onNewSession={newSession}
         onPermissionModeChange={setPermissionMode}
         onModelChange={changeModel}
+        onEffortChange={changeEffort}
         onOpenSettings={(tab) => setSettingsTab(tab)}
         onOpenSearch={() => setSearchOpen(true)}
         memoryCount={memoryCount}
@@ -988,14 +1072,15 @@ export default function App() {
           onDeleteEmployee={team.removeEmployee}
           onStartTask={(t) => startTask(t)}
           onRerunTask={(t) => startTask({ ...t, sessionId: undefined, round: 0, reviews: t.reviews })}
-          onStopTask={(id) => {
-            window.api.teamStop(id)
-            patchTaskRef.current(id, { status: 'stopped', finishedAt: Date.now() })
-          }}
+          onStopTask={stopTask}
+          onResumeTask={(t) => resumeTask(t)}
+          onStopEmployee={stopEmployee}
+          onResumeEmployee={resumeEmployee}
           onDeleteTask={(id) => {
             team.removeTask(id)
             const { [id]: _drop, ...rest } = runtimeRef.current
             runtimeRef.current = rest
+            setBgTasks(({ [id]: _bg, ...others }) => others)
           }}
           onReview={reviewTask}
           onSelectTool={selectTool}
@@ -1045,6 +1130,9 @@ export default function App() {
           <button className={rightTab === 'diff' ? 'active' : ''} onClick={() => setRightTab('diff')} title="변경 사항">
             변경
           </button>
+          <button className={rightTab === 'tasks' ? 'active' : ''} onClick={() => setRightTab('tasks')} title="지금 진행 중인 요청과 백그라운드 작업">
+            백그라운드{bgRunning > 0 ? ` (${bgRunning})` : ''}
+          </button>
           <button className={rightTab === 'terminal' ? 'active' : ''} onClick={() => setRightTab('terminal')} title="터미널 (Ctrl+`)">
             터미널
           </button>
@@ -1057,6 +1145,29 @@ export default function App() {
         </div>
         {rightTab === 'tools' && <ToolLog calls={panelCalls} selected={selectedTool} onSelect={selectTool} />}
         {rightTab === 'diff' && <DiffPanel calls={panelCalls} selected={selectedTool} onSelect={setSelectedTool} />}
+        {rightTab === 'tasks' && (
+          <BackgroundPanel
+            scopes={bgScopes}
+            chatRunning={running}
+            chatStatus={status}
+            employees={team.employees}
+            teamTasks={team.tasks}
+            onOpenTask={(id) => {
+              setMode('team')
+              setSelectedTaskId(id)
+            }}
+            onStopTeamTask={stopTask}
+            onClearFinished={() =>
+              setBgTasks((all) =>
+                Object.fromEntries(
+                  Object.entries(all)
+                    .map(([scope, tasks]) => [scope, Object.fromEntries(Object.entries(tasks).filter(([, t]) => t.status === 'running'))] as const)
+                    .filter(([, tasks]) => Object.keys(tasks).length > 0)
+                )
+              )
+            }
+          />
+        )}
         {openedTabs.terminal && (
           <div className="right-keep" style={{ display: rightTab === 'terminal' ? 'flex' : 'none' }}>
             <TerminalPanel cwd={cwd} visible={rightTab === 'terminal'} onInsertText={insertToChat} />
