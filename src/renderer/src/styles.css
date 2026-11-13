@@ -784,3 +784,9 @@ button.pbtn.accent:hover:not(:disabled) { color: var(--text); background: rgba(2
 
 /* 오른쪽 패널 탭이 6개라 폭을 글자 수에 맞춘다 */
 .right .tabs button { flex: 1 1 auto; padding: 10px 6px; }
+
+/* 팀 화면: 세션별 팀 선택 줄 */
+.team-switch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.team-switch select { width: auto; max-width: 340px; padding: 4px 8px; font-size: 12px; }
+.team-switch button { white-space: nowrap; font-size: 12px; padding: 4px 10px; }
+.team-others { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); margin-left: auto; }

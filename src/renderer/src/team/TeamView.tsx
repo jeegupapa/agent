@@ -5,6 +5,7 @@ import { Markdown } from '../components/Markdown'
 import { ToolChip } from '../components/ToolChip'
 import { EmployeeForm, TaskForm } from './TeamForms'
 import { EMPTY_RUNTIME, STATUS_LABEL, isActive, type TaskRuntime } from './runtime'
+import type { TeamRow } from './store'
 import { useModelCatalog } from '../models'
 import { modelShort } from '../../../shared/models'
 
@@ -18,6 +19,14 @@ export interface TeamViewProps {
   storeError?: string
   /** 이 PC 이름 (다른 PC 에서 실행한 작업을 구분) */
   hostname: string
+  /** 지금 세션의 팀과 전체 팀 목록 */
+  teamId: string
+  teams: TeamRow[]
+  onSwitchTeam: (id: string) => void
+  /** 다른 팀의 직원을 지금 팀으로 복사. 복사한 수를 돌려준다 */
+  onImportEmployees: (fromTeamId: string) => number
+  /** 팀과 그 팀의 직원·작업 삭제. 진행 중인 작업이 있어 지우지 못했으면 false */
+  onDeleteTeam: (id: string) => boolean
   /** 이 창의 팝업 대기열에 권한 요청이 있는 작업 id */
   pendingTaskIds: string[]
   onRecheckPermissions: () => void
@@ -79,6 +88,18 @@ export function TeamView(p: TeamViewProps) {
   const selected = p.tasks.find((t) => t.id === p.selectedTaskId) ?? null
   const runningCount = p.tasks.filter((t) => isActive(t.status)).length
   const reviewCount = p.tasks.filter((t) => t.status === 'needs_review' || t.status === 'waiting_permission').length
+  // 직원을 가져올 수 있는 다른 팀
+  const importable = p.teams.filter((t) => t.id !== p.teamId && t.employees > 0)
+  const [notice, setNotice] = useState('')
+  // 다른 팀에서 돌고 있거나 확인을 기다리는 작업 (확인이 필요한 팀 먼저)
+  const others = p.teams.filter((t) => t.id !== p.teamId && t.running + t.attention > 0).sort((a, b) => b.attention - a.attention)
+  const othersRunning = others.reduce((n, t) => n + t.running, 0)
+  const othersAttention = others.reduce((n, t) => n + t.attention, 0)
+  // 팀이 바뀌면 직원 필터와 안내를 지운다
+  useEffect(() => {
+    setFilterEmployee(null)
+    setNotice('')
+  }, [p.teamId])
 
   return (
     <div className="team">
@@ -95,6 +116,62 @@ export function TeamView(p: TeamViewProps) {
         <button className="primary" disabled={p.employees.length === 0} onClick={() => setShowTaskForm({})}>
           + 작업 지시
         </button>
+      </div>
+
+      <div className="team-switch">
+        <span className="muted small">이 세션의 팀</span>
+        <select className="text" value={p.teamId} onChange={(e) => p.onSwitchTeam(e.target.value)} title="세션마다 팀이 따로 있습니다. 다른 팀을 고르면 이 세션이 그 팀을 쓰게 됩니다">
+          {p.teams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name} · 직원 {t.employees}
+              {t.running > 0 ? ` · 진행 ${t.running}` : ''}
+              {t.attention > 0 ? ` · 확인 ${t.attention}` : ''}
+            </option>
+          ))}
+        </select>
+        {importable.length > 0 && (
+          <select
+            className="text"
+            value=""
+            title="다른 팀의 직원(지시문·모델 설정 포함)을 이 팀으로 복사합니다. 작업은 복사하지 않습니다"
+            onChange={(e) => {
+              if (!e.target.value) return
+              const n = p.onImportEmployees(e.target.value)
+              setNotice(n > 0 ? `직원 ${n}명을 가져왔습니다.` : '가져올 새 직원이 없습니다 (이미 같은 직원이 있습니다).')
+            }}
+          >
+            <option value="">직원 가져오기…</option>
+            {importable.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} (직원 {t.employees})
+              </option>
+            ))}
+          </select>
+        )}
+        <button
+          className="ghost"
+          disabled={runningCount > 0 || p.employees.length + p.tasks.length === 0}
+          title={runningCount > 0 ? '진행 중인 작업이 있어 지울 수 없습니다' : '이 팀과 이 팀의 직원·작업 기록을 지웁니다'}
+          onClick={() => {
+            const cur = p.teams.find((t) => t.id === p.teamId)
+            if (confirm(`"${cur?.name ?? '이 팀'}" 팀을 지울까요?\n직원 ${p.employees.length}명과 작업 기록 ${p.tasks.length}건이 함께 지워지고 되돌릴 수 없습니다.`)) {
+              if (!p.onDeleteTeam(p.teamId)) setNotice('진행 중인 작업이 있어 지우지 못했습니다.')
+            }
+          }}
+        >
+          팀 삭제
+        </button>
+        {notice && <span className="muted small">{notice}</span>}
+        {others.length > 0 && (
+          <span className="team-others small">
+            다른 팀에 {othersRunning > 0 ? `진행 중 ${othersRunning}건` : ''}
+            {othersRunning > 0 && othersAttention > 0 ? ' · ' : ''}
+            {othersAttention > 0 ? `확인 필요 ${othersAttention}건` : ''}
+            <button className="pbtn" onClick={() => p.onSwitchTeam(others[0].id)}>
+              {others.length === 1 ? `"${others[0].name}" 보기` : '그 팀 보기'}
+            </button>
+          </span>
+        )}
       </div>
 
       <div className="team-body">
@@ -185,7 +262,7 @@ export function TeamView(p: TeamViewProps) {
           })}
           {p.employees.length === 0 && (
             <div className="muted small" style={{ padding: 8 }}>
-              아직 직원이 없습니다. "+ 직원"으로 템플릿에서 만들어 보세요.
+              이 세션의 팀에는 아직 직원이 없습니다. "+ 직원"으로 템플릿에서 만들거나, 위에서 다른 팀의 직원을 가져오세요. 채팅에서 "팀에게 맡기기"로 요청하면 팀장이 필요한 직원을 채용합니다.
             </div>
           )}
         </aside>

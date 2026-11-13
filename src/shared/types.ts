@@ -174,9 +174,24 @@ export interface SendPromptArgs {
 
 // ---------- 팀 (직원 에이전트) ----------
 
+/**
+ * 세션마다 따로 꾸리는 팀. 직원과 작업은 teamId 로 팀에 속한다.
+ * 이름은 처음에는 만든 시각으로 붙고(autoName), 그 세션에 첫 메시지가 생기면 세션 제목을 따라간다.
+ */
+export interface TeamInfo {
+  id: string
+  name: string
+  createdAt: number
+  autoName?: boolean
+}
+/** teamId 가 없는 직원·작업(세션별 팀이 생기기 전에 만든 것)이 속하는 팀 */
+export const DEFAULT_TEAM_ID = 'default'
+
 /** 역할과 지시문을 가진 직원 에이전트 정의 */
 export interface Employee {
   id: string
+  /** 속한 팀. 없으면 기존 팀(DEFAULT_TEAM_ID) */
+  teamId?: string
   name: string
   /** 직함 (예: 프론트엔드 개발자) */
   role: string
@@ -221,6 +236,8 @@ export interface TaskReview {
 /** 직원에게 지시한 작업 하나 */
 export interface TeamTask {
   id: string
+  /** 속한 팀. 없으면 기존 팀(DEFAULT_TEAM_ID) */
+  teamId?: string
   employeeId: string
   title: string
   instructions: string
@@ -538,6 +555,8 @@ export interface SavedSessionMeta {
    * (팀에게 맡기기만 한 대화처럼 Claude 세션이 없을 수도 있다). 없으면 예전 문서: id 가 곧 Claude 세션 id
    */
   claudeSessionId?: string
+  /** 이 세션에서 쓰던 팀. 세션을 다시 열면 그 팀이 함께 돌아온다. 없으면 기존 팀 */
+  teamId?: string
 }
 
 // ---------- 앱 자동 업데이트 ----------

@@ -19,7 +19,7 @@ import type {
   UpdateStatus,
   UsageSummary
 } from '../../shared/types'
-import { DISPATCH_TASK_ID, EMPLOYEE_PRESETS, type MemoryItem, type TeamUsage } from '../../shared/types'
+import { DEFAULT_TEAM_ID, DISPATCH_TASK_ID, EMPLOYEE_PRESETS, type MemoryItem, type TeamUsage } from '../../shared/types'
 import { Sidebar } from './components/Sidebar'
 import { SearchDialog } from './components/SearchDialog'
 import { MemoryDialog } from './memory/MemoryDialog'
@@ -38,7 +38,7 @@ import { Resizer } from './components/Resizer'
 import { TeamView } from './team/TeamView'
 import { BackgroundPanel, visibleBgTasks, type BgScope } from './components/BackgroundPanel'
 import { isTeamAware, renderTeamStatus } from './team/status'
-import { useTeamStore } from './team/store'
+import { teamOf, useScopedTeam, useTeamStore } from './team/store'
 import { AUTO, legacyToAuto } from '../../shared/models'
 import { EMPTY_RUNTIME, applyEvent, deriveTaskPatch, isActive, type TaskRuntime } from './team/runtime'
 import {
@@ -264,11 +264,36 @@ export default function App() {
   const currentTitle = items.find((i) => i.type === 'user')?.text.slice(0, 60) ?? '현재 대화'
 
   // ----- 팀 (직원 에이전트) -----
-  const team = useTeamStore(fbUser, !!fbSettings?.enabled)
-  const patchTaskRef = useRef(team.patchTask)
-  patchTaskRef.current = team.patchTask
-  const teamRef = useRef(team)
-  teamRef.current = team
+  // 팀은 세션마다 따로 꾸린다. store 는 모든 팀의 직원·작업(id 로 찾고 고칠 때), team 은 지금 세션의 팀만 보는 뷰
+  const store = useTeamStore(fbUser, !!fbSettings?.enabled)
+  // 앱을 켜면 새 세션이므로 새 팀으로 시작한다 (팀은 직원이나 작업이 처음 생길 때 저장된다).
+  // 이전 팀은 팀 화면의 선택 상자나 세션 기록에서 다시 고를 수 있다
+  const [teamId, setTeamId] = useState(() => crypto.randomUUID() as string)
+  const scoped = useScopedTeam(store, teamId)
+  const team = {
+    ...store,
+    employees: scoped.employees,
+    tasks: scoped.tasks,
+    // 새 직원·작업은 지금 팀에 들어가고, 이미 있는 것은 속한 팀을 그대로 둔다
+    upsertEmployee: scoped.upsertEmployee,
+    upsertTask: scoped.upsertTask
+  }
+  const patchTaskRef = useRef(store.patchTask)
+  patchTaskRef.current = store.patchTask
+  const teamRef = useRef(store)
+  teamRef.current = store
+  const scopedRef = useRef(scoped)
+  scopedRef.current = scoped
+
+  // 팀 이름은 세션의 첫 메시지를 따라간다 (직접 정한 이름이 없을 때)
+  useEffect(() => {
+    const info = store.teams.find((t) => t.id === teamId)
+    const firstUser = items.find((i) => i.type === 'user')
+    const full = firstUser && firstUser.type === 'user' ? firstUser.text.trim().replace(/\s+/g, ' ') : ''
+    const title = full.length > 30 ? full.slice(0, 30).trim() + '…' : full
+    if (info?.autoName && title && info.name !== title) store.upsertTeam({ ...info, name: title })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.teams, teamId, items])
 
   // 작업 이벤트 → 런타임 + 작업 레코드
   useEffect(() => {
@@ -315,12 +340,12 @@ export default function App() {
   // 대기 중인 권한 요청이 있는 팀 작업은 "승인 필요" 로 표시
   useEffect(() => {
     const waiting = new Set(permissions.map((p) => p.taskId).filter((id): id is string => !!id))
-    for (const t of team.tasks) {
+    for (const t of store.tasks) {
       if (waiting.has(t.id) && isActive(t.status) && t.status !== 'waiting_permission') {
         teamRef.current.upsertTask({ ...t, status: 'waiting_permission' })
       }
     }
-  }, [permissions, team.tasks])
+  }, [permissions, store.tasks])
 
   /**
    * 팝업 대기열을 메인 프로세스가 실제로 기다리는 요청 목록에 맞춘다. 대기열은 화면 쪽 메모리에만 있어서
@@ -353,7 +378,7 @@ export default function App() {
   // 앱을 다시 켰을 때 "작업 중"으로 남아 있는 작업은 실제로는 죽었으므로 중단 처리
   const reconciled = useRef(false)
   useEffect(() => {
-    if (reconciled.current || team.tasks.length === 0) return
+    if (reconciled.current || store.tasks.length === 0) return
     reconciled.current = true
     Promise.all([window.api.teamRunning(), window.api.hostname()]).then(([ids, host]) => {
       for (const t of teamRef.current.tasks) {
@@ -365,7 +390,7 @@ export default function App() {
       // 작업 목록이 늦게 도착했을 수 있으므로 "승인 필요" 표시도 한 번 더 맞춘다
       void syncPermissions()
     })
-  }, [team.tasks.length, syncPermissions])
+  }, [store.tasks.length, syncPermissions])
 
   /**
    * 작업 시작. opts.stay 면 팀 화면으로 전환하지 않고(채팅에서 배분한 작업), opts.employee 로
@@ -376,7 +401,7 @@ export default function App() {
     followUp?: string,
     opts: { stay?: boolean; employee?: Employee; resume?: boolean } = {}
   ): void => {
-    const employee = opts.employee ?? team.employees.find((e) => e.id === task.employeeId)
+    const employee = opts.employee ?? store.employees.find((e) => e.id === task.employeeId)
     if (!employee) return
     const started: TeamTask = {
       ...task,
@@ -430,8 +455,39 @@ export default function App() {
     for (const t of team.tasks) if (t.employeeId === employeeId && t.status === 'stopped') resumeTask(t, { stay: true })
   }
 
+  /** 팀 화면에서 다른 팀으로 바꾼다. 이 세션이 그 팀을 쓰게 된다 */
+  const switchTeam = (id: string): void => {
+    if (id === teamId) return
+    setTeamId(id)
+    setSelectedTaskId(null)
+    setSelectedTool(null)
+    dirty.current = true
+  }
+  /** 작업을 팀 화면에서 연다. 다른 팀의 작업이면 그 팀으로 바꾼다 */
+  const openTask = (id: string): void => {
+    const t = store.tasks.find((x) => x.id === id)
+    if (t) switchTeam(teamOf(t))
+    setSelectedTaskId(id)
+    setSelectedTool(null)
+    setMode('team')
+  }
+  /** 팀과 그 팀의 직원·작업을 지운다. 진행 중인 작업이 있으면 지우지 않는다 */
+  const deleteTeam = (id: string): boolean => {
+    const mine = store.tasks.filter((t) => teamOf(t) === id)
+    if (mine.some((t) => isActive(t.status))) return false
+    const drop = new Set(mine.map((t) => t.id))
+    runtimeRef.current = Object.fromEntries(Object.entries(runtimeRef.current).filter(([k]) => !drop.has(k)))
+    setBgTasks((all) => Object.fromEntries(Object.entries(all).filter(([k]) => !drop.has(k))))
+    store.removeTeam(id)
+    if (id === teamId) {
+      setTeamId(crypto.randomUUID())
+      setSelectedTaskId(null)
+    }
+    return true
+  }
+
   const reviewTask = (id: string, decision: ReviewDecision, comment: string): void => {
-    const t = team.tasks.find((x) => x.id === id)
+    const t = store.tasks.find((x) => x.id === id)
     if (!t) return
     const reviews = [...t.reviews, { at: Date.now(), decision, comment: comment || undefined }]
     if (decision === 'approved') {
@@ -457,7 +513,7 @@ export default function App() {
   const hireFromPreset = (role: string, hired: Employee[]): Employee | undefined => {
     const norm = (s: string): string => s.replace(/\s|\(.*?\)/g, '').toLowerCase()
     const match = (e: { role: string }): boolean => norm(e.role) === norm(role) || norm(e.role).includes(norm(role)) || norm(role).includes(norm(e.role))
-    const existing = hired.find(match) ?? teamRef.current.employees.find(match)
+    const existing = hired.find(match) ?? scopedRef.current.employees.find(match)
     if (existing) return existing
     const preset = EMPLOYEE_PRESETS.find(match)
     if (!preset) return undefined
@@ -543,7 +599,7 @@ export default function App() {
   useEffect(() => {
     const dispatched = new Set(items.flatMap((it) => (it.type === 'dispatch' ? it.taskIds : [])))
     if (dispatched.size === 0) return
-    const fresh = team.tasks.filter(
+    const fresh = store.tasks.filter(
       (t) =>
         dispatched.has(t.id) &&
         (t.status === 'needs_review' || t.status === 'failed' || t.status === 'stopped') &&
@@ -555,16 +611,16 @@ export default function App() {
       ...prev,
       ...fresh.map((t) => ({ id: `r-${t.id}-${t.round}`, type: 'report' as const, taskId: t.id, round: t.round, report: t.report, error: t.error }))
     ])
-  }, [team.tasks, items])
+  }, [store.tasks, items])
 
   const teamSummary = {
-    running: team.tasks.filter((t) => isActive(t.status)).length,
-    attention: team.tasks.filter((t) => t.status === 'needs_review' || t.status === 'waiting_permission' || t.status === 'failed').length
+    running: store.tasks.filter((t) => isActive(t.status)).length,
+    attention: store.tasks.filter((t) => t.status === 'needs_review' || t.status === 'waiting_permission' || t.status === 'failed').length
   }
   const permissionContext = (() => {
     if (!permission?.taskId) return undefined
-    const t = team.tasks.find((x) => x.id === permission.taskId)
-    const e = t && team.employees.find((x) => x.id === t.employeeId)
+    const t = store.tasks.find((x) => x.id === permission.taskId)
+    const e = t && store.employees.find((x) => x.id === t.employeeId)
     return t ? `${e ? `${e.emoji} ${e.name}` : '직원'} · ${t.title}` : '팀 작업'
   })()
   // 오른쪽 패널에 보여줄 도구 호출: 팀 모드면 선택한 작업의 것
@@ -572,8 +628,8 @@ export default function App() {
 
   // 백그라운드 탭: 세션별 작업 목록과, 탭 제목에 붙일 "지금 돌고 있는 것" 수
   const bgScopes: BgScope[] = Object.entries(bgTasks).map(([scope, tasks]) => {
-    const t = scope === 'chat' ? undefined : team.tasks.find((x) => x.id === scope)
-    const e = t ? team.employees.find((x) => x.id === t.employeeId) : undefined
+    const t = scope === 'chat' ? undefined : store.tasks.find((x) => x.id === scope)
+    const e = t ? store.employees.find((x) => x.id === t.employeeId) : undefined
     return {
       scope,
       label: scope === 'chat' ? '채팅 세션' : `${e?.emoji ?? '❔'} ${e?.name ?? '삭제된 직원'} · ${t?.title ?? '삭제된 작업'}`,
@@ -583,7 +639,7 @@ export default function App() {
   })
   const bgRunning =
     (running ? 1 : 0) +
-    team.tasks.filter((t) => isActive(t.status)).length +
+    store.tasks.filter((t) => isActive(t.status)).length +
     bgScopes.reduce((n, s) => n + visibleBgTasks(s.tasks).filter((t) => t.status === 'running' && t.background).length, 0)
 
   // 대화 내용이 바뀌면 저장 대상이 된다 (일반 답변, 팀장 배분·보고 카드, 메모리 안내 등 모두)
@@ -613,6 +669,7 @@ export default function App() {
         id,
         // undefined 는 저장 시 빠지므로 빈 문자열로 "Claude 세션 없음" 을 남긴다
         claudeSessionId: sessionId ?? '',
+        teamId,
         title,
         cwd,
         model: session?.model,
@@ -632,7 +689,7 @@ export default function App() {
     }, 1500)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, items, sessionId, fbUser, fbKey])
+  }, [running, items, sessionId, fbUser, fbKey, teamId])
 
   const openSavedSession = async (id: string): Promise<void> => {
     if (running || !fbUser) return
@@ -642,6 +699,9 @@ export default function App() {
       // 예전 문서는 id 가 곧 Claude 세션 id 였다. 새 문서는 claudeSessionId 를 따로 둔다 (없을 수도 있음)
       docId.current = s.id
       setSessionId(s.claudeSessionId === undefined ? s.id : s.claudeSessionId || undefined)
+      // 그 세션에서 쓰던 팀을 함께 되돌린다 (세션별 팀이 생기기 전의 세션은 기존 팀)
+      setTeamId(s.teamId ?? DEFAULT_TEAM_ID)
+      setSelectedTaskId(null)
       setSession(null)
       setCwd(s.cwd)
       skipDirtyOnce.current = true
@@ -885,6 +945,9 @@ export default function App() {
 
   const newSession = (): void => {
     if (running) return
+    // 새 세션은 새 팀으로 시작한다. 이전 팀과 그 작업은 그대로 남아 계속 돌고, 팀 화면에서 다시 고를 수 있다
+    setTeamId(crypto.randomUUID())
+    setSelectedTaskId(null)
     setBgTasks(({ chat: _chat, ...rest }) => rest)
     setSessionId(undefined)
     setSession(null)
@@ -981,16 +1044,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config])
   useEffect(() => {
-    const key = `${MODEL_MIGRATED_KEY}.team.${team.backend}`
-    if (team.employees.length === 0 || localStorage.getItem(key)) return
+    const key = `${MODEL_MIGRATED_KEY}.team.${store.backend}`
+    if (store.employees.length === 0 || localStorage.getItem(key)) return
     localStorage.setItem(key, '1')
-    for (const e of team.employees) {
+    for (const e of store.employees) {
       const next = legacyToAuto(e.model)
       // 이 버전 이후에 일부러 버전을 고정한 직원은 건드리지 않는다
-      if (next && e.updatedAt < MODEL_AUTO_CUTOFF) team.upsertEmployee({ ...e, model: next })
+      if (next && e.updatedAt < MODEL_AUTO_CUTOFF) store.upsertEmployee({ ...e, model: next })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [team.employees, team.backend])
+  }, [store.employees, store.backend])
 
   return (
     <div className="app" style={{ gridTemplateColumns: gridColumns }}>
@@ -1062,6 +1125,11 @@ export default function App() {
           backend={team.backend}
           storeError={team.error}
           hostname={hostname}
+          teamId={teamId}
+          teams={scoped.rows}
+          onSwitchTeam={switchTeam}
+          onImportEmployees={scoped.importEmployees}
+          onDeleteTeam={deleteTeam}
           pendingTaskIds={permissions.map((p) => p.taskId).filter((id): id is string => !!id)}
           onRecheckPermissions={() => void syncPermissions()}
           onSelectTask={(id) => {
@@ -1095,18 +1163,14 @@ export default function App() {
         insertRequest={insertRequest}
         attachRequest={attachRequest}
         teamMode={teamChat}
-        tasks={team.tasks}
-        employees={team.employees}
+        tasks={store.tasks}
+        employees={store.employees}
         onToggleTeamMode={() => setTeamChat((v) => !v)}
         onSend={send}
         onInterrupt={() => window.api.interrupt()}
         onSelectTool={selectTool}
         onReviewTask={reviewTask}
-        onOpenTask={(id) => {
-          setSelectedTaskId(id)
-          setSelectedTool(null)
-          setMode('team')
-        }}
+        onOpenTask={openTask}
         onRemember={(text) => rememberFromChat(text, 'chat')}
       />
       )}
@@ -1150,12 +1214,9 @@ export default function App() {
             scopes={bgScopes}
             chatRunning={running}
             chatStatus={status}
-            employees={team.employees}
-            teamTasks={team.tasks}
-            onOpenTask={(id) => {
-              setMode('team')
-              setSelectedTaskId(id)
-            }}
+            employees={store.employees}
+            teamTasks={store.tasks}
+            onOpenTask={openTask}
             onStopTeamTask={stopTask}
             onClearFinished={() =>
               setBgTasks((all) =>
@@ -1211,8 +1272,8 @@ export default function App() {
           sessions={savedSessions}
           currentSessionId={sessionId}
           current={{ title: currentTitle, items }}
-          tasks={team.tasks}
-          employees={team.employees}
+          tasks={store.tasks}
+          employees={store.employees}
           cwd={cwd}
           onOpenSession={(id) => {
             setSearchOpen(false)
@@ -1220,9 +1281,7 @@ export default function App() {
           }}
           onOpenTask={(id) => {
             setSearchOpen(false)
-            setSelectedTaskId(id)
-            setSelectedTool(null)
-            setMode('team')
+            openTask(id)
           }}
           onReference={(text) => {
             setSearchOpen(false)
