@@ -63,6 +63,7 @@ interface Props {
 const MODES: { value: PermissionMode; label: string; desc: string }[] = [
   { value: 'default', label: '기본', desc: '파일 수정·명령 실행 전 매번 확인' },
   { value: 'acceptEdits', label: '편집 자동 승인', desc: '파일 편집은 자동, 명령은 확인' },
+  { value: 'auto', label: '자동 판단', desc: '안전한 작업은 바로 실행, 위험한 작업만 막거나 확인' },
   { value: 'plan', label: '플랜 모드', desc: '계획만 세우고 실행하지 않음' },
   { value: 'bypassPermissions', label: '모두 허용', desc: '확인 없이 모두 실행 (주의)' }
 ]

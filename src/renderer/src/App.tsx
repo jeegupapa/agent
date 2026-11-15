@@ -5,6 +5,7 @@ import type {
   Attachment,
   AuthStatus,
   BgTask,
+  DispatchAssignment,
   EffortLevel,
   ClaudeEvent,
   Employee,
@@ -37,7 +38,8 @@ import * as fb from './firebase'
 import { Resizer } from './components/Resizer'
 import { TeamView } from './team/TeamView'
 import { BackgroundPanel, visibleBgTasks, type BgScope } from './components/BackgroundPanel'
-import { isTeamAware, renderTeamStatus } from './team/status'
+import { isTeamAware, renderReports, renderRoster, renderTeamStatus } from './team/status'
+import { MAX_AUTO_ROUNDS, parseDelegation } from '../../shared/delegate'
 import { teamOf, useScopedTeam, useTeamStore } from './team/store'
 import { AUTO, legacyToAuto } from '../../shared/models'
 import { EMPTY_RUNTIME, applyEvent, deriveTaskPatch, isActive, type TaskRuntime } from './team/runtime'
@@ -110,6 +112,34 @@ export default function App() {
   useEffect(() => localStorage.setItem('claude-cli-studio.mode', mode), [mode])
   // 채팅 입력을 팀장이 받아 직원에게 배분할지
   const [teamChat, setTeamChat] = useState(() => localStorage.getItem('claude-cli-studio.teamChat') === '1')
+  // 자동 진행: 배분한 작업이 끝나면 팀장이 보고를 받아 다음 단계를 이어서 배분한다 (기본 켜짐)
+  const [autoContinue, setAutoContinue] = useState(() => localStorage.getItem('claude-cli-studio.autoContinue') !== '0')
+  useEffect(() => localStorage.setItem('claude-cli-studio.autoContinue', autoContinue ? '1' : '0'), [autoContinue])
+  const autoContinueRef = useRef(autoContinue)
+  autoContinueRef.current = autoContinue
+  /**
+   * 조율 그룹: 함께 맡긴 작업 묶음. 모두 끝나면 맡긴 쪽(채팅의 팀장, 또는 조율 역할의 직원 작업)에게 보고를 돌려준다.
+   * pending 은 맡길 작업을 아직 만들고 있는 중이라는 표시.
+   */
+  const groupsRef = useRef<
+    {
+      kind: 'chat' | 'employee'
+      taskIds: string[]
+      round: number
+      teamId: string
+      original?: string
+      requestId?: string
+      parentTaskId?: string
+      pending?: boolean
+      /** 작업 목록에서 한 번이라도 확인된 작업 id */
+      seen?: Record<string, boolean>
+    }[]
+  >([])
+  const [groupTick, setGroupTick] = useState(0)
+  /** 조율 직원의 작업이 끝났을 때 맡길 일이 있으면 시작한다 (이벤트 처리기에서 부르므로 ref 로 최신 함수를 가리킨다) */
+  const delegateRef = useRef<(parentTaskId: string, list: DispatchAssignment[]) => void>(() => undefined)
+  /** 조율 직원의 작업별로 지금까지 맡긴 횟수 */
+  const delegateRoundsRef = useRef<Record<string, number>>({})
   useEffect(() => localStorage.setItem('claude-cli-studio.teamChat', teamChat ? '1' : '0'), [teamChat])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   // 작업별 실시간 트랜스크립트. ref 에 두고 버전 카운터로 다시 그린다 (이벤트 핸들러 클로저 문제 회피)
@@ -333,6 +363,21 @@ export default function App() {
       const next = applyEvent(prev, event)
       runtimeRef.current = { ...runtimeRef.current, [taskId]: next }
       setRuntimeVersion((v) => v + 1)
+      if (event.kind === 'result' || event.kind === 'error') {
+        const t = teamRef.current.tasks.find((x) => x.id === taskId)
+        const e = t && teamRef.current.employees.find((x) => x.id === t.employeeId)
+        const failed = event.kind === 'error' || event.isError
+        if (t) window.api.notify(failed ? '작업 실패' : '작업 완료 · 검토 요청', `${e ? `${e.emoji} ${e.name} · ` : ''}${t.title}`)
+        // 조율 역할의 직원이 다른 직원에게 일을 맡겼으면, 이 작업을 "끝남"으로 보기 전에 그룹을 먼저 걸어 둔다
+        if (!failed && t && e && isTeamAware(e)) {
+          const list = parseDelegation(next.lastAssistantText)
+          const rounds = groupsRef.current.filter((g) => g.kind === 'employee' && g.parentTaskId === taskId).length
+          if (list.length > 0 && (delegateRoundsRef.current[taskId] ?? 0) < MAX_AUTO_ROUNDS && rounds === 0) {
+            groupsRef.current.push({ kind: 'employee', taskIds: [], round: 0, teamId: teamOf(t), parentTaskId: taskId, pending: true })
+            setTimeout(() => delegateRef.current(taskId, list), 0)
+          }
+        }
+      }
       patchTaskRef.current(taskId, (t) => deriveTaskPatch(t, event, next) ?? {})
     })
   }, [applyBgTask])
@@ -399,7 +444,7 @@ export default function App() {
   const startTask = (
     task: TeamTask,
     followUp?: string,
-    opts: { stay?: boolean; employee?: Employee; resume?: boolean } = {}
+    opts: { stay?: boolean; employee?: Employee; resume?: boolean; note?: string } = {}
   ): void => {
     const employee = opts.employee ?? store.employees.find((e) => e.id === task.employeeId)
     if (!employee) return
@@ -416,7 +461,11 @@ export default function App() {
     }
     team.upsertTask(started)
     const prevRt = followUp ? runtimeRef.current[task.id] ?? EMPTY_RUNTIME : EMPTY_RUNTIME
-    const userText = opts.resume ? '▶ 중단된 작업을 이어서 진행' : (followUp ?? `# ${task.title}\n\n${task.instructions}`)
+    const userText = opts.note ?? (opts.resume ? '▶ 중단된 작업을 이어서 진행' : (followUp ?? `# ${task.title}\n\n${task.instructions}`))
+    // 이 작업이 속한 팀 (새 작업이면 지금 세션의 팀)
+    const tid = task.teamId ?? (store.tasks.some((x) => x.id === task.id) ? DEFAULT_TEAM_ID : teamId)
+    const mates = store.employees.filter((e) => teamOf(e) === tid)
+    const aware = isTeamAware(employee)
     runtimeRef.current = {
       ...runtimeRef.current,
       [task.id]: { ...prevRt, streamingId: null, items: [...prevRt.items, { id: `u-${Date.now()}`, type: 'user', text: userText }] }
@@ -429,8 +478,9 @@ export default function App() {
         employee,
         followUp,
         memory: memoryText,
-        // PM 처럼 조율하는 직원에게는 지금 팀이 하고 있는 일을 함께 알려 준다
-        teamStatus: isTeamAware(employee) ? renderTeamStatus(team.employees, team.tasks, Date.now(), task.id) : undefined
+        // PM 처럼 조율하는 직원에게는 지금 팀이 하고 있는 일과 같은 팀 직원 목록을 함께 알려 준다 (다른 직원에게 일을 맡길 수 있다)
+        teamStatus: aware ? renderTeamStatus(mates, store.tasks.filter((t) => teamOf(t) === tid), Date.now(), task.id) : undefined,
+        roster: aware ? renderRoster(mates, employee.id) : undefined
       })
       .catch((err) => {
         patchTaskRef.current(task.id, { status: 'failed', finishedAt: Date.now(), error: err instanceof Error ? err.message : String(err) })
@@ -509,36 +559,85 @@ export default function App() {
 
   // ----- 채팅 요청 → 팀장 배분 -----
 
-  /** 템플릿 직함으로 직원을 찾거나 새로 채용한다. hired 는 이번 배분에서 방금 만든 직원들 */
-  const hireFromPreset = (role: string, hired: Employee[]): Employee | undefined => {
-    const norm = (s: string): string => s.replace(/\s|\(.*?\)/g, '').toLowerCase()
+  /** 템플릿 직함으로 그 팀의 직원을 찾거나 새로 채용한다. hired 는 이번 배분에서 방금 만든 직원들 */
+  const hireFromPreset = (role: string, hired: Employee[], tid: string = teamId): Employee | undefined => {
+    const norm = (x: string): string => x.replace(/\s|\(.*?\)/g, '').toLowerCase()
     const match = (e: { role: string }): boolean => norm(e.role) === norm(role) || norm(e.role).includes(norm(role)) || norm(role).includes(norm(e.role))
-    const existing = hired.find(match) ?? scopedRef.current.employees.find(match)
+    const existing = hired.find(match) ?? teamRef.current.employees.filter((e) => teamOf(e) === tid).find(match)
     if (existing) return existing
     const preset = EMPLOYEE_PRESETS.find(match)
     if (!preset) return undefined
     const now = Date.now()
-    const e: Employee = { ...preset, id: crypto.randomUUID(), createdAt: now, updatedAt: now }
-    team.upsertEmployee(e)
+    const e: Employee = { ...preset, id: crypto.randomUUID(), createdAt: now, updatedAt: now, teamId: tid === DEFAULT_TEAM_ID ? undefined : tid }
+    if (tid === teamId) team.upsertEmployee(e)
+    else store.upsertEmployee(e)
     hired.push(e)
     return e
   }
 
-  const dispatchToTeam = async (rawPrompt: string, attachments: Attachment[] = []): Promise<void> => {
-    const requestId = `req-${Date.now()}`
-    const prompt = withAttachments(rawPrompt, attachments)
-    setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: rawPrompt, attachments: attachments.length ? attachments : undefined }])
+  /** 배분 목록을 그 팀의 직원 작업으로 만들어 시작한다. exceptEmployeeId 는 맡긴 사람 자신(자기에게는 맡기지 않는다) */
+  const startAssignments = (
+    list: DispatchAssignment[],
+    tid: string,
+    taskCwd: string,
+    origin: TeamTask['origin'],
+    exceptEmployeeId?: string
+  ): { taskIds: string[]; skipped: string[] } => {
+    const pool = teamRef.current.employees.filter((e) => teamOf(e) === tid && e.id !== exceptEmployeeId)
+    const hired: Employee[] = []
+    const taskIds: string[] = []
+    const skipped: string[] = []
+    for (const a of list) {
+      const who = a.employeeId
+      let employee = who ? pool.find((e) => e.id === who) : undefined
+      // 모델이 id 대신 이름이나 직함을 적는 경우도 받아 준다
+      if (!employee && who) employee = pool.find((e) => e.name === who || e.role === who)
+      if (!employee && a.presetRole) employee = hireFromPreset(a.presetRole, hired, tid)
+      if (!employee && who) employee = hireFromPreset(who, hired, tid)
+      if (!employee || employee.id === exceptEmployeeId) {
+        skipped.push(a.title)
+        continue
+      }
+      const task: TeamTask = {
+        id: crypto.randomUUID(),
+        teamId: tid === DEFAULT_TEAM_ID ? undefined : tid,
+        employeeId: employee.id,
+        title: a.title,
+        instructions: a.instructions,
+        cwd: taskCwd,
+        status: 'queued',
+        createdAt: Date.now(),
+        progress: { toolUses: 0 },
+        reviews: [],
+        round: 0,
+        origin
+      }
+      // 지금 세션의 팀이 아닌 팀의 작업은 먼저 넣어 두어 팀이 바뀌지 않게 한다
+      if (tid !== teamId) store.upsertTask(task)
+      taskIds.push(task.id)
+      startTask(task, undefined, { stay: true, employee })
+    }
+    return { taskIds, skipped }
+  }
+
+  /**
+   * 팀장에게 배분을 맡긴다. reports 가 있으면 "이어서 진행" 호출 (방금 끝난 작업의 보고를 검토하고 다음 단계를 정한다).
+   * 자동 진행이 켜져 있으면 배분한 작업 묶음을 기억해 두었다가 모두 끝났을 때 다시 부른다.
+   */
+  const runDispatch = async (g: { original: string; round: number; requestId: string; reports?: string }): Promise<void> => {
     setRunning(true)
-    setStatus('🧭 팀장이 요청을 읽고 직원에게 배분하는 중…')
+    setStatus(g.reports ? `🧭 팀장이 보고를 검토하고 다음 단계를 정하는 중… (${g.round}/${MAX_AUTO_ROUNDS}차)` : '🧭 팀장이 요청을 읽고 직원에게 배분하는 중…')
     try {
       const plan = await window.api.teamDispatch({
-        request: prompt,
+        request: g.original,
         cwd,
         employees: team.employees.map(({ id, name, role, specialty }) => ({ id, name, role, specialty })),
         model: config?.model || undefined,
         memory: memoryText,
         // 팀장이 지금 누가 무엇을 하고 있는지 알고 답하거나 배분하도록 현황을 함께 보낸다
-        teamStatus: renderTeamStatus(team.employees, team.tasks) || undefined
+        teamStatus: renderTeamStatus(team.employees, team.tasks) || undefined,
+        autoContinue: autoContinueRef.current,
+        followUp: g.reports ? { round: g.round, maxRounds: MAX_AUTO_ROUNDS, reports: g.reports } : undefined
       })
       if (plan.assignments.length === 0) {
         setItems((prev) => [
@@ -547,35 +646,7 @@ export default function App() {
         ])
         return
       }
-      const hired: Employee[] = []
-      const taskIds: string[] = []
-      const skipped: string[] = []
-      for (const a of plan.assignments) {
-        let employee = a.employeeId ? team.employees.find((e) => e.id === a.employeeId) : undefined
-        // 모델이 id 대신 이름이나 직함을 적는 경우도 받아 준다
-        if (!employee && a.employeeId) employee = team.employees.find((e) => e.name === a.employeeId || e.role === a.employeeId)
-        if (!employee && a.presetRole) employee = hireFromPreset(a.presetRole, hired)
-        if (!employee && a.employeeId) employee = hireFromPreset(a.employeeId, hired)
-        if (!employee) {
-          skipped.push(a.title)
-          continue
-        }
-        const task: TeamTask = {
-          id: crypto.randomUUID(),
-          employeeId: employee.id,
-          title: a.title,
-          instructions: a.instructions,
-          cwd,
-          status: 'queued',
-          createdAt: Date.now(),
-          progress: { toolUses: 0 },
-          reviews: [],
-          round: 0,
-          origin: { kind: 'chat', requestId }
-        }
-        taskIds.push(task.id)
-        startTask(task, undefined, { stay: true, employee })
-      }
+      const { taskIds, skipped } = startAssignments(plan.assignments, teamId, cwd, { kind: 'chat', requestId: g.requestId })
       setItems((prev) => [
         ...prev,
         { id: `d-${Date.now()}`, type: 'dispatch', summary: plan.summary, taskIds },
@@ -583,6 +654,10 @@ export default function App() {
           ? [{ id: `s-${Date.now()}`, type: 'system' as const, text: `맞는 직원을 찾지 못해 배분하지 못한 작업: ${skipped.join(', ')}` }]
           : [])
       ])
+      if (taskIds.length > 0) {
+        groupsRef.current.push({ kind: 'chat', taskIds, round: g.round, teamId, original: g.original, requestId: g.requestId })
+        setGroupTick((n) => n + 1)
+      }
     } catch (err) {
       setItems((prev) => [
         ...prev,
@@ -593,6 +668,79 @@ export default function App() {
       setStatus('')
     }
   }
+
+  const dispatchToTeam = async (rawPrompt: string, attachments: Attachment[] = []): Promise<void> => {
+    setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: rawPrompt, attachments: attachments.length ? attachments : undefined }])
+    await runDispatch({ original: withAttachments(rawPrompt, attachments), round: 1, requestId: `req-${Date.now()}` })
+  }
+
+  // 조율 역할의 직원이 맡긴 작업을 시작한다
+  delegateRef.current = (parentTaskId, list) => {
+    const drop = (): void => {
+      groupsRef.current = groupsRef.current.filter((g) => !(g.kind === 'employee' && g.parentTaskId === parentTaskId && g.pending))
+      setGroupTick((n) => n + 1)
+    }
+    const parent = store.tasks.find((t) => t.id === parentTaskId)
+    if (!parent) return drop()
+    const round = (delegateRoundsRef.current[parentTaskId] ?? 0) + 1
+    const { taskIds } = startAssignments(list, teamOf(parent), parent.cwd, { kind: 'delegate', parentTaskId }, parent.employeeId)
+    if (taskIds.length === 0) return drop()
+    delegateRoundsRef.current[parentTaskId] = round
+    groupsRef.current = groupsRef.current.map((g) =>
+      g.kind === 'employee' && g.parentTaskId === parentTaskId && g.pending ? { ...g, taskIds, round, pending: false } : g
+    )
+    setGroupTick((n) => n + 1)
+  }
+
+  // 맡긴 작업 묶음이 모두 끝나면 맡긴 쪽에게 보고를 돌려주고 다음 단계를 이어 간다
+  useEffect(() => {
+    if (groupsRef.current.length === 0) return
+    const finished = (t: TeamTask | undefined): boolean => !t || ['needs_review', 'failed', 'stopped', 'approved'].includes(t.status)
+    // 조율 직원이 일을 맡겨 놓고 보고를 기다리는 작업은 아직 끝난 것이 아니다
+    const waitingOnTeam = (id: string): boolean => groupsRef.current.some((g) => g.kind === 'employee' && g.parentTaskId === id)
+    for (const g of [...groupsRef.current]) {
+      if (g.pending) continue
+      const tasks = g.taskIds.map((id) => {
+        const t = store.tasks.find((x) => x.id === id)
+        if (t) (g.seen ??= {})[id] = true
+        return t
+      })
+      // 방금 만든 작업은 이 시점의 목록에 아직 없을 수 있다. 한 번도 보이지 않은 작업을 "끝났다"고 보면 묶음을 통째로 놓치므로 기다린다
+      if (g.taskIds.some((id, i) => !tasks[i] && !g.seen?.[id])) continue
+      if (!tasks.every(finished) || g.taskIds.some(waitingOnTeam)) continue
+      // 채팅 쪽은 팀장을 부를 수 있을 때(다른 응답이 진행 중이 아닐 때)까지 기다린다
+      if (g.kind === 'chat' && running) continue
+      groupsRef.current = groupsRef.current.filter((x) => x !== g)
+      const done = tasks.filter((t): t is TeamTask => !!t)
+      // 사용자가 중단한 작업이 있으면 알아서 이어 가지 않는다
+      if (done.length === 0 || done.some((t) => t.status === 'stopped')) continue
+      const reports = renderReports(done, store.employees)
+      if (g.kind === 'chat') {
+        if (!autoContinueRef.current || g.teamId !== teamId || !g.original || !g.requestId) continue
+        if (g.round >= MAX_AUTO_ROUNDS) {
+          setItems((prev) => [...prev, { id: `s-${Date.now()}`, type: 'system', text: `자동 진행은 ${MAX_AUTO_ROUNDS}차까지입니다. 이어서 하려면 "계속 진행"이라고 보내 주세요.` }])
+          continue
+        }
+        setItems((prev) => [...prev, { id: `s-${Date.now()}`, type: 'system', text: `🧭 자동 진행 ${g.round + 1}/${MAX_AUTO_ROUNDS}차: 직원 ${done.length}명의 보고를 팀장이 검토합니다.` }])
+        void runDispatch({ original: g.original, round: g.round + 1, requestId: g.requestId, reports })
+      } else if (g.parentTaskId) {
+        const parent = store.tasks.find((t) => t.id === g.parentTaskId)
+        // 사용자가 그사이 승인·수정 요청·중단을 했으면 건드리지 않는다
+        if (!parent || parent.status !== 'needs_review') continue
+        const last = g.round >= MAX_AUTO_ROUNDS
+        startTask(
+          parent,
+          `# 맡긴 작업의 보고 (${g.round}차)\n\n${reports}\n\n위 보고를 검토하고 원래 작업을 이어서 진행하세요. ` +
+            (last
+              ? '맡기기는 여기까지입니다. 더 맡기지 말고 지금까지의 결과로 최종 보고를 하세요. '
+              : '다음 단계에 더 맡길 일이 있으면 같은 형식의 delegate 블록을 쓰고, 없으면 최종 보고만 하세요. ') +
+            '끝나면 "## 보고" 형식으로 보고하세요.',
+          { resume: true, stay: true, note: `📨 맡긴 작업 ${done.length}건의 보고가 도착해 이어서 진행 (${g.round}차)` }
+        )
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.tasks, running, groupTick, teamId])
 
   // 채팅에서 배분한 작업이 끝나면(검토 요청·실패·중단) 보고서를 채팅에 올린다. 라운드마다 한 번
   const reportedRef = useRef(new Set<string>())
@@ -702,6 +850,7 @@ export default function App() {
       // 그 세션에서 쓰던 팀을 함께 되돌린다 (세션별 팀이 생기기 전의 세션은 기존 팀)
       setTeamId(s.teamId ?? DEFAULT_TEAM_ID)
       setSelectedTaskId(null)
+      groupsRef.current = groupsRef.current.filter((g) => g.kind !== 'chat')
       setSession(null)
       setCwd(s.cwd)
       skipDirtyOnce.current = true
@@ -847,9 +996,13 @@ export default function App() {
 
   useEffect(() => {
     const offEvent = window.api.onEvent(handleEvent)
-    const offPerm = window.api.onPermission((req) =>
+    const offPerm = window.api.onPermission((req) => {
       setPermissions((q) => (q.some((p) => p.requestId === req.requestId) ? q : [...q, req]))
-    )
+      // 창이 뒤에 있으면 Windows 알림으로 알린다 (승인을 기다리며 작업이 멈춰 있지 않도록)
+      const t = req.taskId ? teamRef.current.tasks.find((x) => x.id === req.taskId) : undefined
+      const e = t && teamRef.current.employees.find((x) => x.id === t.employeeId)
+      window.api.notify('권한 승인 필요', `${t ? `${e ? `${e.emoji} ${e.name} · ` : ''}${t.title}` : '채팅'} — ${req.toolName} 실행을 기다리고 있습니다`)
+    })
     // 답하기 전에 취소된 요청(작업 중단 등)은 팝업에서 치우고, 그 작업의 "승인 필요" 표시도 푼다
     const offClosed = window.api.onPermissionClosed((requestId) => {
       const closed = permissionsRef.current.find((p) => p.requestId === requestId)
@@ -948,6 +1101,7 @@ export default function App() {
     // 새 세션은 새 팀으로 시작한다. 이전 팀과 그 작업은 그대로 남아 계속 돌고, 팀 화면에서 다시 고를 수 있다
     setTeamId(crypto.randomUUID())
     setSelectedTaskId(null)
+    groupsRef.current = groupsRef.current.filter((g) => g.kind !== 'chat')
     setBgTasks(({ chat: _chat, ...rest }) => rest)
     setSessionId(undefined)
     setSession(null)
@@ -1130,6 +1284,9 @@ export default function App() {
           onSwitchTeam={switchTeam}
           onImportEmployees={scoped.importEmployees}
           onDeleteTeam={deleteTeam}
+          onSetTeamPermission={(mode) => {
+            for (const e of team.employees) if (e.permissionMode !== mode) store.upsertEmployee({ ...e, permissionMode: mode, updatedAt: Date.now() })
+          }}
           pendingTaskIds={permissions.map((p) => p.taskId).filter((id): id is string => !!id)}
           onRecheckPermissions={() => void syncPermissions()}
           onSelectTask={(id) => {
@@ -1166,6 +1323,8 @@ export default function App() {
         tasks={store.tasks}
         employees={store.employees}
         onToggleTeamMode={() => setTeamChat((v) => !v)}
+        autoContinue={autoContinue}
+        onToggleAutoContinue={() => setAutoContinue((v) => !v)}
         onSend={send}
         onInterrupt={() => window.api.interrupt()}
         onSelectTool={selectTool}

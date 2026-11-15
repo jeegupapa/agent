@@ -121,6 +121,8 @@ const api = {
   teamStart: (args: TeamStartArgs): Promise<void> => ipcRenderer.invoke('team:start', args),
   teamStop: (taskId: string): Promise<void> => ipcRenderer.invoke('team:stop', taskId),
   teamRunning: (): Promise<string[]> => ipcRenderer.invoke('team:running'),
+  /** 창이 뒤에 있을 때만 Windows 알림을 띄운다 */
+  notify: (title: string, body: string): void => ipcRenderer.send('app:notify', title, body),
   teamDispatch: (args: DispatchArgs): Promise<DispatchPlan> => ipcRenderer.invoke('team:dispatch', args),
   onTeamEvent: (cb: (ev: TeamEvent) => void): (() => void) => {
     const handler = (_: unknown, ev: TeamEvent): void => cb(ev)

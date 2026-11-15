@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Employee, ReviewDecision, TeamTask } from '../../../shared/types'
+import type { Employee, PermissionMode, ReviewDecision, TeamTask } from '../../../shared/types'
 import { AnswerBox, extractQuestions } from './AnswerBox'
 import { Markdown } from '../components/Markdown'
 import { ToolChip } from '../components/ToolChip'
@@ -27,6 +27,8 @@ export interface TeamViewProps {
   onImportEmployees: (fromTeamId: string) => number
   /** 팀과 그 팀의 직원·작업 삭제. 진행 중인 작업이 있어 지우지 못했으면 false */
   onDeleteTeam: (id: string) => boolean
+  /** 이 팀 직원 모두의 권한 모드를 한 번에 바꾼다 (다음에 시작하는 작업부터 적용) */
+  onSetTeamPermission: (mode: PermissionMode) => void
   /** 이 창의 팝업 대기열에 권한 요청이 있는 작업 id */
   pendingTaskIds: string[]
   onRecheckPermissions: () => void
@@ -44,6 +46,14 @@ export interface TeamViewProps {
   onDeleteTask: (id: string) => void
   onReview: (id: string, decision: ReviewDecision, comment: string) => void
   onSelectTool: (id: string) => void
+}
+
+const PERMISSION_LABEL: Record<PermissionMode, string> = {
+  auto: '자동 판단',
+  acceptEdits: '편집 자동 승인',
+  default: '매번 확인',
+  bypassPermissions: '모두 허용',
+  plan: '계획만'
 }
 
 function fmtTime(ms?: number): string {
@@ -91,6 +101,11 @@ export function TeamView(p: TeamViewProps) {
   // 직원을 가져올 수 있는 다른 팀
   const importable = p.teams.filter((t) => t.id !== p.teamId && t.employees > 0)
   const [notice, setNotice] = useState('')
+  // 이 팀 직원들의 권한 모드 요약 (예: "자동 판단 3 · 매번 확인 1")
+  const modeSummary =
+    Object.entries(p.employees.reduce<Record<string, number>>((m, e) => ({ ...m, [e.permissionMode]: (m[e.permissionMode] ?? 0) + 1 }), {}))
+      .map(([mode, n]) => `${PERMISSION_LABEL[mode as PermissionMode]} ${n}`)
+      .join(' · ') || '-'
   // 다른 팀에서 돌고 있거나 확인을 기다리는 작업 (확인이 필요한 팀 먼저)
   const others = p.teams.filter((t) => t.id !== p.teamId && t.running + t.attention > 0).sort((a, b) => b.attention - a.attention)
   const othersRunning = others.reduce((n, t) => n + t.running, 0)
@@ -146,6 +161,24 @@ export function TeamView(p: TeamViewProps) {
                 {t.name} (직원 {t.employees})
               </option>
             ))}
+          </select>
+        )}
+        {p.employees.length > 0 && (
+          <select
+            className="text"
+            value=""
+            title={`이 팀 직원 모두의 권한 모드를 한 번에 바꿉니다. 다음에 시작하는 작업부터 적용됩니다.\n지금: ${modeSummary}`}
+            onChange={(e) => {
+              const mode = e.target.value as PermissionMode
+              if (!mode) return
+              p.onSetTeamPermission(mode)
+              setNotice(`직원 ${p.employees.length}명의 권한 모드를 "${PERMISSION_LABEL[mode]}"(으)로 바꿨습니다. 다음 작업부터 적용됩니다.`)
+            }}
+          >
+            <option value="">권한: {modeSummary}</option>
+            <option value="auto">모두 "자동 판단"으로 (권장)</option>
+            <option value="acceptEdits">모두 "편집 자동 승인"으로</option>
+            <option value="default">모두 "매번 확인"으로</option>
           </select>
         )}
         <button

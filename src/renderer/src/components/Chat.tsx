@@ -31,6 +31,9 @@ interface Props {
   tasks: TeamTask[]
   employees: Employee[]
   onToggleTeamMode: () => void
+  /** 자동 진행: 배분한 작업이 끝나면 팀장이 보고를 검토해 다음 단계를 이어서 배분 */
+  autoContinue: boolean
+  onToggleAutoContinue: () => void
   onSend: (prompt: string, attachments: Attachment[]) => void
   onInterrupt: () => void
   onSelectTool: (id: string) => void
@@ -348,11 +351,23 @@ export function Chat(p: Props) {
             <span className="knob" />
             👥 팀에게 맡기기
           </label>
+          {p.teamMode && (
+            <label
+              className={`team-toggle ${p.autoContinue ? 'on' : ''}`}
+              title="켜면 맡긴 작업이 끝날 때마다 팀장이 보고를 검토해 다음 단계(구현 → 검증 등)를 이어서 배분합니다. 사용자의 결정이 꼭 필요할 때와 4차까지 간 뒤에는 멈춥니다"
+            >
+              <input type="checkbox" checked={p.autoContinue} onChange={p.onToggleAutoContinue} />
+              <span className="knob" />
+              자동 진행
+            </label>
+          )}
           <span className="muted small">
             {p.teamMode
               ? activeCount > 0
                 ? `직원 ${activeCount}명이 작업 중 · 보고서는 이 채팅으로 옵니다`
-                : '팀장이 배분 → 직원들이 동시에 작업 → 보고서가 여기로 돌아옵니다'
+                : p.autoContinue
+                  ? '팀장이 배분 → 직원 작업 → 보고 검토 → 다음 단계 배분을 끝날 때까지 이어 갑니다'
+                  : '팀장이 배분 → 직원들이 동시에 작업 → 보고서가 여기로 돌아옵니다'
               : 'Claude Code 가 직접 처리합니다'}
           </span>
         </div>

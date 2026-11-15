@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, Notification, ipcMain, dialog, shell, type MenuItemConstructorOptions } from 'electron'
 import { execFile, spawn } from 'child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { homedir, hostname } from 'os'
@@ -339,6 +339,7 @@ app.on('web-contents-created', (_e, contents) => {
 })
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32') app.setAppUserModelId('com.example.claude-cli-studio')
   // ----- Claude 실행 -----
   ipcMain.handle('claude:send', async (_e, args: SendPromptArgs) => {
     if (!runner) throw new Error('창이 준비되지 않았습니다.')
@@ -375,6 +376,19 @@ app.whenReady().then(() => {
     await team?.stop(taskId)
   })
   ipcMain.handle('team:running', () => team?.runningTaskIds ?? [])
+  // 창이 뒤에 있을 때만 Windows 알림을 띄운다 (승인 요청, 작업 완료). 누르면 창이 앞으로 온다
+  ipcMain.on('app:notify', (e, title: string, body: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win || win.isDestroyed() || (win.isFocused() && !win.isMinimized()) || !Notification.isSupported()) return
+    const n = new Notification({ title, body: body.slice(0, 240), silent: false })
+    n.on('click', () => {
+      if (win.isDestroyed()) return
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+    })
+    n.show()
+  })
   // 채팅 요청 → 팀장이 직원 작업으로 배분
   ipcMain.handle('team:dispatch', async (_e, args: DispatchArgs) => {
     if (!team) throw new Error('창이 준비되지 않았습니다.')

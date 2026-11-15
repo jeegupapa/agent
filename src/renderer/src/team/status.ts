@@ -81,3 +81,24 @@ export function renderTeamStatus(employees: Employee[], tasks: TeamTask[], now =
   }
   return lines.join('\n')
 }
+
+/** 같은 팀 직원 목록 (조율 역할의 직원이 누구에게 맡길 수 있는지). selfId 는 자기 자신 */
+export function renderRoster(employees: Employee[], selfId: string): string {
+  return employees
+    .filter((e) => e.id !== selfId)
+    .map((e) => `- ${e.name} | ${e.role} | ${e.specialty}`)
+    .join('\n')
+}
+
+/** 끝난 작업들의 보고를 한 덩어리로 (팀장·조율 직원에게 돌려줄 때) */
+export function renderReports(tasks: TeamTask[], employees: Employee[], maxEach = 2500): string {
+  return tasks
+    .map((t) => {
+      const e = employees.find((x) => x.id === t.employeeId)
+      const who = e ? `${e.name}(${e.role})` : '삭제된 직원'
+      const body = t.status === 'failed' ? `실패: ${t.error ?? '원인 미상'}` : (t.report ?? '(보고 없음)')
+      const cut = body.length > maxEach ? body.slice(0, maxEach) + '\n…(이하 생략)' : body
+      return `### ${who} — "${t.title}" [${STATUS_LABEL[t.status]}]\n${cut}`
+    })
+    .join('\n\n')
+}

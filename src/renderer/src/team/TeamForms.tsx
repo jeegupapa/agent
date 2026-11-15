@@ -5,7 +5,8 @@ import { isTeamAware } from './status'
 import { ModelSelect } from '../models'
 
 const MODES: { value: PermissionMode; label: string; desc: string }[] = [
-  { value: 'acceptEdits', label: '편집 자동 승인', desc: '파일 편집은 알아서, 명령 실행은 물어봄 (권장)' },
+  { value: 'auto', label: '자동 판단', desc: '안전한 작업은 바로 실행하고 위험한 작업만 막거나 물어봄 (권장: 승인을 기다리며 멈추지 않음)' },
+  { value: 'acceptEdits', label: '편집 자동 승인', desc: '파일 편집은 알아서, 명령 실행은 매번 물어봄' },
   { value: 'default', label: '매번 확인', desc: '편집·명령 모두 승인 요청이 올라옴' },
   { value: 'bypassPermissions', label: '모두 허용', desc: '확인 없이 전부 실행 (주의)' },
   { value: 'plan', label: '계획만', desc: '실행하지 않고 계획만 세움' }
@@ -31,7 +32,7 @@ export function EmployeeForm(p: {
       color: COLORS[0],
       specialty: '',
       instructions: '',
-      permissionMode: 'acceptEdits',
+      permissionMode: 'auto',
       createdAt: now,
       updatedAt: now
     }
