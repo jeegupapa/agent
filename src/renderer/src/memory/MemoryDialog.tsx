@@ -26,7 +26,7 @@ export function MemoryDialog(p: {
     })
   }
   return (
-    <div className="modal-backdrop" onClick={p.onCancel} style={{ zIndex: 40 }}>
+    <div className="modal-backdrop" onClick={p.onCancel} style={{ zIndex: 1010 }}>
       <div className="modal memory-dialog" onClick={(e) => e.stopPropagation()}>
         <h3>{p.initial.id ? '메모리 수정' : '메모리로 저장'}</h3>
         <p className="muted small">
