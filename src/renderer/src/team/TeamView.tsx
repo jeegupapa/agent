@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Employee, PermissionMode, ReviewDecision, TeamTask } from '../../../shared/types'
+import type { Employee, PermissionMode, ReviewDecision, TeamDecision, TeamTask } from '../../../shared/types'
 import { AnswerBox, extractQuestions } from './AnswerBox'
 import { Markdown } from '../components/Markdown'
 import { ToolChip } from '../components/ToolChip'
 import { EmployeeForm, TaskForm } from './TeamForms'
-import { EMPTY_RUNTIME, STATUS_LABEL, isActive, needsUser, parentOf, type TaskRuntime } from './runtime'
+import { EMPTY_RUNTIME, STATUS_LABEL, isActive, isAsk, needsUser, parentOf, type TaskRuntime } from './runtime'
 import type { TeamRow } from './store'
 import { useModelCatalog } from '../models'
 import { modelShort } from '../../../shared/models'
@@ -27,6 +27,9 @@ export interface TeamViewProps {
   onImportEmployees: (fromTeamId: string) => number
   /** 팀과 그 팀의 직원·작업 삭제. 진행 중인 작업이 있어 지우지 못했으면 false */
   onDeleteTeam: (id: string) => boolean
+  /** 팀 결정 기록: 직원들이 정한 것과 사용자가 답한 것. 모든 직원에게 전달된다 */
+  decisions: TeamDecision[]
+  onRemoveDecision: (id: string) => void
   /** 이 팀 직원 모두의 권한 모드를 한 번에 바꾼다 (다음에 시작하는 작업부터 적용) */
   onSetTeamPermission: (mode: PermissionMode) => void
   /** 이 창의 팝업 대기열에 권한 요청이 있는 작업 id */
@@ -117,6 +120,7 @@ export function TeamView(p: TeamViewProps) {
   // 직원을 가져올 수 있는 다른 팀
   const importable = p.teams.filter((t) => t.id !== p.teamId && t.employees > 0)
   const [notice, setNotice] = useState('')
+  const [showDecisions, setShowDecisions] = useState(false)
   // 이 팀 직원들의 권한 모드 요약 (예: "자동 판단 3 · 매번 확인 1")
   const modeSummary =
     Object.entries(p.employees.reduce<Record<string, number>>((m, e) => ({ ...m, [e.permissionMode]: (m[e.permissionMode] ?? 0) + 1 }), {}))
@@ -197,6 +201,12 @@ export function TeamView(p: TeamViewProps) {
             <option value="default">모두 "매번 확인"으로</option>
           </select>
         )}
+        <button
+          title="직원들이 정한 것과 사용자가 답한 것입니다. 모든 직원에게 전달되어 같은 질문이 되풀이되지 않게 합니다"
+          onClick={() => setShowDecisions(true)}
+        >
+          결정 기록 {p.decisions.length}
+        </button>
         <button
           className="ghost"
           disabled={runningCount > 0 || p.employees.length + p.tasks.length === 0}
@@ -347,6 +357,7 @@ export function TeamView(p: TeamViewProps) {
                         <div className="task-main">
                           <div className="task-title">
                             {t.title}
+                            {isAsk(t) && <span className="badge">문의</span>}
                             {t.round > 0 && <span className="badge">{t.round}차 수정</span>}
                             {t.status === 'needs_review' && extractQuestions(t.report).length > 0 && (
                               <span className="badge ask" title="보고서에 직원의 확인 요청이 있습니다. 열어서 답해 주세요">
@@ -406,6 +417,38 @@ export function TeamView(p: TeamViewProps) {
         </section>
       </div>
 
+      {showDecisions && (
+        <div className="modal-backdrop" onClick={() => setShowDecisions(false)}>
+          <div className="modal" onClick={(ev) => ev.stopPropagation()}>
+            <h3>팀 결정 기록</h3>
+            <p className="muted small">
+              직원들이 작업하면서 정한 것과 사용자가 확인 요청에 답한 것입니다. 이 팀의 모든 직원에게 "이미 정해진 것"으로 전달되어,
+              같은 질문이 다시 올라오지 않습니다. 틀렸거나 더는 맞지 않는 것은 지우세요.
+            </p>
+            {p.decisions.length === 0 && <div className="muted">아직 기록된 결정이 없습니다.</div>}
+            <div className="decision-list">
+              {[...p.decisions].reverse().map((d) => (
+                <div key={d.id} className="decision-row">
+                  <div className="decision-main">
+                    <div>{d.text}</div>
+                    <div className="muted small">
+                      {d.by} · {new Date(d.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                  <button className="ghost" title="이 결정을 지웁니다 (다음에 시작하는 작업부터 전달되지 않습니다)" onClick={() => p.onRemoveDecision(d.id)}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <button className="primary" onClick={() => setShowDecisions(false)}>
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showEmployeeForm && (
         <EmployeeForm
           initial={showEmployeeForm === 'new' ? undefined : showEmployeeForm}
@@ -543,7 +586,7 @@ function TaskDetail(p: {
         <div className="task-flow small">
           {p.lead && (
             <div>
-              <span className="muted">맡긴 사람 </span>
+              <span className="muted">{isAsk(t) ? '문의한 사람 ' : '맡긴 사람 '}</span>
               <button className="linkish" onClick={() => p.onOpenTask(p.lead!.id)} title="이 작업을 맡긴 직원의 작업을 엽니다. 보고와 질문은 사용자가 아니라 그 직원에게 갑니다">
                 {p.lead.label}
               </button>
@@ -553,7 +596,7 @@ function TaskDetail(p: {
           )}
           {p.subtasks.length > 0 && (
             <div className="task-subs">
-              <span className="muted">맡긴 작업 {p.subtasks.length}건</span>
+              <span className="muted">맡기거나 문의한 작업 {p.subtasks.length}건</span>
               {p.subtasks.map(({ task: c, employee: ce }) => (
                 <button key={c.id} className="task-sub-row" onClick={() => p.onOpenTask(c.id)}>
                   <span>{ce?.emoji ?? '❔'}</span>

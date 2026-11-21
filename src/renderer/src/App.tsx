@@ -38,11 +38,19 @@ import * as fb from './firebase'
 import { Resizer } from './components/Resizer'
 import { TeamView } from './team/TeamView'
 import { BackgroundPanel, visibleBgTasks, type BgScope } from './components/BackgroundPanel'
-import { isTeamAware, renderReports, renderRoster, renderTeamStatus } from './team/status'
-import { MAX_AUTO_ROUNDS, MAX_DEPTH, parseCoordination, type Coordination } from '../../shared/delegate'
+import { isTeamAware, renderDecisions, renderReports, renderRoster, renderTeamStatus } from './team/status'
+import {
+  MAX_AUTO_ROUNDS,
+  MAX_DEPTH,
+  MAX_HANDOFF_BACK,
+  MAX_PEER_ROUNDS,
+  MAX_TEAM_TASKS,
+  parseCoordination,
+  type Coordination
+} from '../../shared/delegate'
 import { teamOf, useScopedTeam, useTeamStore } from './team/store'
 import { AUTO, legacyToAuto } from '../../shared/models'
-import { EMPTY_RUNTIME, applyEvent, depthOf, deriveTaskPatch, isActive, isSettled, needsUser, parentOf, type TaskRuntime } from './team/runtime'
+import { EMPTY_RUNTIME, applyEvent, depthOf, deriveTaskPatch, isActive, isAsk, isSettled, needsUser, parentOf, type TaskRuntime } from './team/runtime'
 import {
   DEFAULT_LAYOUT,
   LIMITS,
@@ -116,6 +124,8 @@ export default function App() {
   const coordinateRef = useRef<(taskId: string, cmd: Coordination, round: number) => void>(() => undefined)
   /** 작업이 더 맡기지 않고 끝났을 때: 그 작업이 보고받은 하위 작업을 승인 처리한다 */
   const finalizeRef = useRef<(taskId: string) => void>(() => undefined)
+  /** 인계: 끝나는 작업이 이어지는 일을 동료에게 넘긴다 (같은 상위 아래의 작업으로) */
+  const handoffRef = useRef<(from: TeamTask, list: DispatchAssignment[]) => void>(() => undefined)
   /** 보고를 돌려주려고 이어서 시작시킨 상위 작업 (같은 작업을 두 번 시작하지 않게) */
   const resumingRef = useRef(new Set<string>())
   useEffect(() => localStorage.setItem('claude-cli-studio.teamChat', teamChat ? '1' : '0'), [teamChat])
@@ -357,10 +367,25 @@ export default function App() {
       const hasLead = !!leadTask && (leadTask.status === 'waiting_team' || isActive(leadTask.status))
       let wait = false
       if (!failed && t && e && t.status !== 'stopped') {
-        const canCoordinate = isTeamAware(e) && depthOf(t, teamRef.current.tasks) < MAX_DEPTH
-        const cmd = canCoordinate ? parseCoordination(next.lastAssistantText) : { delegate: [], revise: [] }
+        const cmd = parseCoordination(next.lastAssistantText)
+        // 문의에 답하는 작업은 답만 하고 끝난다 (더 맡기거나 묻거나 넘기지 않는다)
+        const leaf = isAsk(t)
+        const canCoordinate = !leaf && isTeamAware(e) && depthOf(t, teamRef.current.tasks) < MAX_DEPTH
+        if (!canCoordinate) {
+          cmd.delegate = []
+          cmd.revise = []
+        }
+        if (leaf) {
+          cmd.ask = []
+          cmd.handoff = []
+        }
+        // 결정: 팀 결정 기록에 남겨 모든 직원에게 전달한다
+        if (cmd.decisions.length > 0) teamRef.current.addDecisions(teamOf(t), e.name, cmd.decisions)
+        // 인계: 상위가 보고를 기다리고 있을 때만. 이 작업을 끝난 것으로 표시하기 전에 넘겨서, 상위가 넘긴 작업까지 기다리게 한다
+        if (cmd.handoff.length > 0 && leadTask?.status === 'waiting_team' && !canCoordinate) handoffRef.current(t, cmd.handoff)
         const round = (t.delegation?.round ?? 0) + 1
-        if ((cmd.delegate.length > 0 || cmd.revise.length > 0) && round <= MAX_AUTO_ROUNDS) {
+        const cap = canCoordinate ? MAX_AUTO_ROUNDS : MAX_PEER_ROUNDS
+        if ((cmd.delegate.length > 0 || cmd.revise.length > 0 || cmd.ask.length > 0) && round <= cap) {
           wait = true
           setTimeout(() => coordinateRef.current(taskId, cmd, round), 0)
         } else setTimeout(() => finalizeRef.current(taskId), 0)
@@ -466,7 +491,9 @@ export default function App() {
     const leadTask = store.tasks.find((x) => x.id === parentOf(task))
     const leadEmp = leadTask && store.employees.find((e) => e.id === leadTask.employeeId)
     // 조율 역할이고 맡기기 깊이가 남아 있으면 다른 직원에게 일을 맡길 수 있다. 위쪽(맡긴 사람들)은 목록에서 뺀다
-    const aware = isTeamAware(employee) && depthOf(task, store.tasks) < MAX_DEPTH
+    const ask = isAsk(task)
+    const aware = !ask && isTeamAware(employee) && depthOf(task, store.tasks) < MAX_DEPTH
+    const leadAlive = !!leadTask && (leadTask.status === 'waiting_team' || isActive(leadTask.status))
     const upline = new Set<string>()
     for (let cur = leadTask; cur && !upline.has(cur.employeeId); cur = store.tasks.find((x) => x.id === parentOf(cur!))) upline.add(cur.employeeId)
     runtimeRef.current = {
@@ -484,7 +511,12 @@ export default function App() {
         // 조율하는 직원(PM·기획자)에게는 지금 팀이 하고 있는 일과 같은 팀 직원 목록을 함께 알려 준다
         teamStatus: aware ? renderTeamStatus(mates, store.tasks.filter((t) => teamOf(t) === tid), Date.now(), task.id) : undefined,
         roster: aware ? renderRoster(mates.filter((m) => !upline.has(m.id)), employee.id) : undefined,
-        lead: leadEmp ? { name: leadEmp.name, role: leadEmp.role } : undefined
+        lead: leadEmp ? { name: leadEmp.name, role: leadEmp.role, ask: ask || undefined } : undefined,
+        // 동료에게 직접 묻거나(문의) 이어지는 일을 넘길 수 있다(인계). 문의에 답하는 작업은 답만 한다
+        peers: ask ? undefined : renderRoster(mates.filter((m) => !upline.has(m.id)), employee.id),
+        canHandoff: !ask && !aware && leadAlive,
+        // 팀에서 이미 정한 것 (다시 묻지 않게)
+        decisions: renderDecisions(store.teams.find((x) => x.id === tid)?.decisions) || undefined
       })
       .catch((err) => {
         patchTaskRef.current(task.id, { status: 'failed', finishedAt: Date.now(), error: err instanceof Error ? err.message : String(err) })
@@ -549,6 +581,15 @@ export default function App() {
       return
     }
     const round = t.round + 1
+    // 사용자가 답한 것은 팀 결정 기록에 남겨, 다른 직원이 같은 것을 다시 묻지 않게 한다
+    if (decision === 'answered' && comment.trim()) {
+      const one = (x: string, n: number): string => {
+        const y = x.replace(/\s+/g, ' ').trim()
+        return y.length > n ? y.slice(0, n) + '…' : y
+      }
+      const pairs = [...comment.matchAll(/\d+\.\s*확인 요청:\s*([\s\S]*?)\n\s*답변:\s*([\s\S]*?)(?=\n\s*\n|$)/g)].map((m) => `${one(m[1], 160)} → ${one(m[2], 120)}`)
+      store.addDecisions(teamOf(t), '사용자', pairs.length > 0 ? pairs : [one(comment, 280)])
+    }
     const followUp =
       decision === 'answered'
         ? // 보고서의 확인 요청(질문)에 대한 답. 수정 지시가 아니라 판단 근거를 주는 것이다
@@ -668,14 +709,29 @@ export default function App() {
     ])
   }
 
-  /** 상위 작업에게 돌려줄 글: 맡긴 작업들의 보고와, 검토 방법 */
-  const leadFollowUp = (round: number, done: TeamTask[]): string => {
-    const last = round >= MAX_AUTO_ROUNDS
+  /** 기다리던 작업에게 돌려줄 글: 문의의 답, 맡긴 작업들의 보고와 검토 방법 */
+  const leadFollowUp = (parent: TeamTask, round: number, done: TeamTask[]): string => {
+    const answers = done.filter(isAsk)
+    const reports = done.filter((t) => !isAsk(t))
+    const emp = store.employees.find((e) => e.id === parent.employeeId)
+    const coordinator = !!emp && isTeamAware(emp) && depthOf(parent, store.tasks) < MAX_DEPTH
+    const last = round >= (coordinator ? MAX_AUTO_ROUNDS : MAX_PEER_ROUNDS)
+    const answerText = answers.length ? `# 문의에 대한 답\n\n${renderReports(answers, store.employees)}\n\n` : ''
+    // 문의만 했던 경우: 답을 받아 원래 작업을 이어 간다
+    if (reports.length === 0 && answers.length > 0) {
+      return (
+        answerText +
+        '위 답을 바탕으로 원래 작업을 이어서 진행하세요. ' +
+        (last ? '문의는 여기까지입니다. 더 묻지 말고, 남은 의문은 가장 무난한 쪽으로 정해 진행한 뒤 보고서에 적으세요. ' : '') +
+        '끝나면 "## 보고" 형식으로 보고하세요.'
+      )
+    }
     return (
-      `# 맡긴 작업의 보고 (${round}차)\n\n${done.length ? renderReports(done, store.employees) : '(돌아온 보고가 없습니다)'}\n\n` +
+      answerText +
+      `# 맡긴 작업의 보고 (${round}차)\n\n${reports.length ? renderReports(reports, store.employees) : '(돌아온 보고가 없습니다)'}\n\n` +
       '## 할 일\n' +
       '1. 각 결과가 지시와 완료 기준을 충족하는지 확인하세요. 보고만 믿지 말고 필요하면 파일을 열어 봅니다.\n' +
-      '2. 직원의 "상위 확인 요청"에는 당신이 정해서 답하세요. 답 때문에 작업이 달라지면 revise 로 돌려보내고, 아니면 정한 내용을 다음 지시나 보고에 반영합니다.\n' +
+      '2. 직원의 "상위 확인 요청"에는 당신이 정해서 답하세요. 답 때문에 작업이 달라지면 revise 로 돌려보내고, 아니면 정한 내용을 다음 지시나 보고에 반영합니다. 다른 직원도 따라야 하는 결정은 decisions 에 적어 두세요.\n' +
       (last
         ? '3. 맡기기는 여기까지입니다. 더 맡기거나 돌려보내지 말고 지금까지의 결과로 최종 보고를 하세요. 남은 일은 보고서에 적습니다.\n'
         : '3. 미흡한 작업은 revise 로 돌려보내고, 다음 단계가 남았으면 delegate 로 맡기세요. 둘 다 없으면 블록 없이 최종 보고를 합니다 (보고받은 작업은 승인 처리됩니다).\n') +
@@ -684,12 +740,64 @@ export default function App() {
     )
   }
 
-  /** 맡긴 작업의 보고를 모아 상위 작업을 이어서 진행시킨다 */
+  /** 기다리던 작업(맡긴 작업의 보고, 문의의 답)을 모아 그 작업을 이어서 진행시킨다 */
   const collectReports = (parent: TeamTask): void => {
     const kids = (parent.delegation?.taskIds ?? []).map((id) => store.tasks.find((t) => t.id === id)).filter((t): t is TeamTask => !!t && isSettled(t.status))
     const round = parent.delegation?.round ?? 1
+    const answers = kids.filter(isAsk).length
+    const note =
+      answers === kids.length && answers > 0
+        ? `💬 문의 ${answers}건의 답을 받아 이어서 진행`
+        : `📨 맡긴 작업 ${kids.length - answers}건의 보고${answers ? `와 문의 ${answers}건의 답` : ''}을 받아 검토 (${round}차)`
     resumingRef.current.add(parent.id)
-    startTask(parent, leadFollowUp(round, kids), { resume: true, stay: true, note: `📨 맡긴 작업 ${kids.length}건의 보고를 받아 검토 (${round}차)` })
+    startTask(parent, leadFollowUp(parent, round, kids), { resume: true, stay: true, note })
+  }
+
+  /** 이름이나 직함으로 그 팀의 직원을 찾는다 (새로 채용하지는 않는다) */
+  const findMate = (who: string, pool: Employee[]): Employee | undefined => {
+    const norm = (x: string): string => x.replace(/\s|\(.*?\)/g, '').toLowerCase()
+    return (
+      pool.find((e) => e.id === who || e.name === who || e.role === who) ??
+      pool.find((e) => norm(e.name) === norm(who) || norm(e.role) === norm(who)) ??
+      pool.find((e) => norm(e.role).includes(norm(who)) || norm(who).includes(norm(e.role)))
+    )
+  }
+
+  // 인계: 끝나는 작업이 이어지는 일을 동료에게 넘긴다. 넘긴 일은 같은 상위 아래의 작업이 되어, 결과가 상위에게 간다
+  handoffRef.current = (from, list) => {
+    const all = teamRef.current.tasks
+    const lead = all.find((t) => t.id === parentOf(from))
+    const fromEmp = teamRef.current.employees.find((e) => e.id === from.employeeId)
+    if (!lead?.delegation || !fromEmp) return
+    const tid = teamOf(from)
+    // 자기 자신과 위쪽(상위와 그 위)에게는 넘기지 않는다
+    const exclude = [from.employeeId]
+    for (let cur: TeamTask | undefined = lead; cur && !exclude.includes(cur.employeeId); cur = all.find((t) => t.id === parentOf(cur!))) exclude.push(cur.employeeId)
+    const pool = teamRef.current.employees.filter((e) => teamOf(e) === tid && !exclude.includes(e.id))
+    const siblings = all.filter((t) => parentOf(t) === lead.id && t.id !== from.id && !isAsk(t))
+    const ids: string[] = []
+    const fresh: DispatchAssignment[] = []
+    for (const a of list) {
+      const target = a.employeeId ? findMate(a.employeeId, pool) : undefined
+      // 받는 직원이 같은 상위 아래에서 이미 끝낸 작업이 있으면 그 작업으로 되돌려 보낸다 (결함·지적을 만든 사람에게)
+      const back = target && siblings.filter((t) => t.employeeId === target.id && isSettled(t.status)).sort((x, y) => (y.finishedAt ?? 0) - (x.finishedAt ?? 0))[0]
+      if (!back) {
+        fresh.push(a)
+        continue
+      }
+      // 같은 작업을 너무 여러 번 주고받으면 그만두고 상위가 정리하게 둔다
+      if (back.round >= MAX_HANDOFF_BACK || ids.includes(back.id)) continue
+      const n = back.round + 1
+      const note = `# ${fromEmp.name}(${fromEmp.role})이(가) 넘긴 일 (${n}차)\n\n## ${a.title}\n${a.instructions}`
+      if (back.sessionId) startTask({ ...back, round: n }, `${note}\n\n위 내용을 반영해 이어서 진행하고, 끝나면 같은 형식으로 다시 보고하세요.`, { stay: true })
+      else startTask({ ...back, round: n, instructions: `${back.instructions}\n\n${note}` }, undefined, { stay: true })
+      ids.push(back.id)
+    }
+    const room = MAX_TEAM_TASKS - all.filter((t) => parentOf(t) === lead.id).length
+    ids.push(...startAssignments(fresh.slice(0, Math.max(0, room)), tid, from.cwd, { kind: 'delegate', parentTaskId: lead.id }, exclude).taskIds)
+    if (ids.length === 0) return
+    // 상위가 기다리는 작업 목록에 더한다 (넘긴 작업까지 끝나야 상위가 보고를 받는다)
+    store.patchTask(lead.id, (cur) => (cur.delegation ? { delegation: { ...cur.delegation, taskIds: [...new Set([...cur.delegation.taskIds, ...ids])] } } : {}))
   }
 
   // 조율 직원의 작업이 끝나면서 낸 맡기기·돌려보내기를 실행한다
@@ -698,9 +806,39 @@ export default function App() {
     const emp = parent && store.employees.find((e) => e.id === parent.employeeId)
     if (!parent || !emp) return
     const ids: string[] = []
+    const tid = teamOf(parent)
+    // 자기 자신과 위쪽(이 작업을 맡긴 사람들)에게는 맡기거나 묻지 않는다
+    const exclude = [parent.employeeId]
+    for (let cur = store.tasks.find((t) => t.id === parentOf(parent)); cur && !exclude.includes(cur.employeeId); cur = store.tasks.find((t) => t.id === parentOf(cur!))) {
+      exclude.push(cur.employeeId)
+    }
+    // 문의: 동료에게 묻는다. 답이 오면 이 작업이 이어서 진행된다 (문의하려고 새 직원을 채용하지는 않는다)
+    const pool = teamRef.current.employees.filter((e) => teamOf(e) === tid && !exclude.includes(e.id))
+    for (const q of cmd.ask) {
+      const who = findMate(q.employee, pool)
+      if (!who) continue
+      const one = q.question.replace(/\s+/g, ' ')
+      const task: TeamTask = {
+        id: crypto.randomUUID(),
+        teamId: tid === DEFAULT_TEAM_ID ? undefined : tid,
+        employeeId: who.id,
+        title: `문의: ${one.length > 26 ? one.slice(0, 26).trim() + '…' : one}`,
+        instructions: `${emp.name}(${emp.role})의 문의입니다. ("${parent.title}" 작업 중)\n\n${q.question}`,
+        cwd: parent.cwd,
+        status: 'queued',
+        createdAt: Date.now(),
+        progress: { toolUses: 0 },
+        reviews: [],
+        round: 0,
+        origin: { kind: 'ask', parentTaskId: taskId }
+      }
+      if (tid !== teamId) store.upsertTask(task)
+      startTask(task, undefined, { stay: true, employee: who })
+      ids.push(task.id)
+    }
     // 돌려보내기: 보고받은 작업을 같은 직원에게 (같은 세션에서 이어서)
     const norm = (x: string): string => x.replace(/\s+/g, '').toLowerCase()
-    const children = store.tasks.filter((t) => parentOf(t) === taskId)
+    const children = store.tasks.filter((t) => parentOf(t) === taskId && !isAsk(t))
     for (const r of cmd.revise) {
       const child =
         children.find((c) => norm(c.title) === norm(r.task)) ??
@@ -716,12 +854,8 @@ export default function App() {
       }
       ids.push(child.id)
     }
-    // 새로 맡기기: 자기 자신과 위쪽(이 작업을 맡긴 사람들)에게는 맡기지 않는다
-    const exclude = [parent.employeeId]
-    for (let cur = store.tasks.find((t) => t.id === parentOf(parent)); cur && !exclude.includes(cur.employeeId); cur = store.tasks.find((t) => t.id === parentOf(cur!))) {
-      exclude.push(cur.employeeId)
-    }
-    ids.push(...startAssignments(cmd.delegate, teamOf(parent), parent.cwd, { kind: 'delegate', parentTaskId: taskId }, exclude).taskIds)
+    // 새로 맡기기
+    ids.push(...startAssignments(cmd.delegate, tid, parent.cwd, { kind: 'delegate', parentTaskId: taskId }, exclude).taskIds)
     if (ids.length === 0) {
       // 맡길 수 있는 것이 하나도 없었다 (직원을 찾지 못함 등). 기다릴 것이 없으니 끝난 것으로 본다
       store.patchTask(taskId, { status: parentOf(parent) ? 'internal_review' : 'needs_review', delegation: undefined })
@@ -1306,6 +1440,8 @@ export default function App() {
           onSwitchTeam={switchTeam}
           onImportEmployees={scoped.importEmployees}
           onDeleteTeam={deleteTeam}
+          decisions={store.teams.find((x) => x.id === teamId)?.decisions ?? []}
+          onRemoveDecision={(id) => store.removeDecision(teamId, id)}
           onSetTeamPermission={(mode) => {
             for (const e of team.employees) if (e.permissionMode !== mode) store.upsertEmployee({ ...e, permissionMode: mode, updatedAt: Date.now() })
           }}

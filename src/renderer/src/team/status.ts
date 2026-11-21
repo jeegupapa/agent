@@ -1,6 +1,6 @@
 // 팀 작업 현황을 글로 정리한다. 팀장(배분)과 조율 역할의 직원(PM 등)에게 프롬프트로 전달해,
 // 지금 누가 무엇을 하고 있고 무엇이 끝났는지 알고 답하거나 배분하게 한다.
-import type { Employee, TeamTask } from '../../../shared/types'
+import type { Employee, TeamDecision, TeamTask } from '../../../shared/types'
 import { STATUS_LABEL, isActive } from './runtime'
 
 /**
@@ -113,4 +113,13 @@ export function renderReports(tasks: TeamTask[], employees: Employee[], maxEach 
       return `### ${who} — "${t.title}" [${STATUS_LABEL[t.status]}]\n${cut}`
     })
     .join('\n\n')
+}
+
+/** 팀 결정 기록을 직원에게 전달할 글로. 없으면 빈 문자열 */
+export function renderDecisions(decisions: TeamDecision[] | undefined): string {
+  if (!decisions?.length) return ''
+  return (
+    '# 팀 결정 기록 (이미 정해진 것입니다. 다시 묻지 말고 따르세요)\n' +
+    decisions.map((d) => `- ${d.text} (${d.by})`).join('\n')
+  )
 }

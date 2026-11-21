@@ -13,11 +13,20 @@ export const MAX_DELEGATE_TASKS = 5
 export const MAX_AUTO_ROUNDS = 6
 /** 맡기기 깊이: PM(0) → 기획자(1) → 전문가(2). 깊이 2 의 직원은 더 맡기지 못한다 */
 export const MAX_DEPTH = 2
+/** 조율 역할이 아닌 직원이 한 작업에서 동료에게 문의할 수 있는 횟수. 넘으면 보고서로 상위에게 올린다 */
+export const MAX_PEER_ROUNDS = 3
+/** 인계로 같은 작업을 되돌려 보낼 수 있는 횟수 (개발 ↔ QA 가 끝없이 주고받지 않게). 넘으면 상위가 정리한다 */
+export const MAX_HANDOFF_BACK = 3
+/** 한 상위 작업 아래에 둘 수 있는 작업 수 (맡긴 것 + 인계로 생긴 것) */
+export const MAX_TEAM_TASKS = 12
+/** 팀 결정 기록에 남기는 건수 (넘으면 오래된 것부터 지운다) */
+export const MAX_DECISIONS = 60
 
-/** 작업을 맡긴 사람 */
+/** 작업을 맡긴 사람. ask 면 맡긴 것이 아니라 문의한 사람이다 */
 export interface Lead {
   name: string
   role: string
+  ask?: boolean
 }
 
 export interface Coordination {
@@ -25,6 +34,12 @@ export interface Coordination {
   delegate: DispatchAssignment[]
   /** 보고받은 작업을 같은 직원에게 돌려보내기 (미흡한 점, 또는 그 직원의 질문에 대한 답) */
   revise: { task: string; instructions: string }[]
+  /** 동료에게 문의: 답을 받으면 이 작업이 이어서 진행된다 */
+  ask: { employee: string; question: string }[]
+  /** 인계: 자기 일을 마치고 이어지는 일을 동료에게 넘긴다. 결과는 같은 상위가 받는다 */
+  handoff: DispatchAssignment[]
+  /** 다른 직원도 알아야 하는 결정 (팀 결정 기록에 남는다) */
+  decisions: string[]
 }
 
 const USER_ONLY = '비용이 드는 일, 데이터 삭제, 외부 공개, 라이선스·법적 판단, 프로그램 설치, 요청 범위를 바꾸는 일'
@@ -74,6 +89,48 @@ ${
 }`
 }
 
+/**
+ * 동료와 주고받는 방법 (문의·인계·결정 기록). 문의에 답하는 작업을 뺀 모든 직원에게 붙는다.
+ * peers: 문의·인계할 수 있는 같은 팀 직원 목록. canHandoff: 상위가 있을 때만 인계할 수 있다.
+ */
+export function peerRules(o: { peers: string; canHandoff: boolean; leadName?: string }): string {
+  const blocks = [
+    '  "ask": [{"employee": "직원 이름 또는 직함", "question": "묻는 내용 (그 직원이 이것만 읽고 답할 수 있게)"}]',
+    ...(o.canHandoff ? ['  "handoff": [{"employee": "직원 이름 또는 직함", "title": "작업 제목", "instructions": "넘기는 일: 무엇을, 왜, 완료 기준, 참고할 파일"}]'] : []),
+    '  "decisions": ["다른 직원도 알아야 하는 결정 한 줄"]'
+  ]
+  return `
+
+## 동료와 주고받기
+같은 팀 직원과는 사용자를 거치지 않고 직접 주고받습니다. 필요할 때 마지막 메시지에서 "## 보고" 보다 앞에 아래 형식의 코드블록을 쓰세요 (필요한 것만).
+\`\`\`json
+{
+${blocks.join(',\n')}
+}
+\`\`\`
+${o.peers ? `### 문의·인계할 수 있는 직원\n${o.peers}\n` : ''}
+- **문의(ask)**: 동료만 아는 것(그 사람이 만든 것의 인터페이스·형식·의도, 맞춰야 하는 이름이나 위치)이 필요할 때 씁니다. 답이 오면 당신의 작업이 그 자리에서 이어지니, 답과 무관한 부분은 먼저 해 두세요. 파일을 읽으면 알 수 있는 것은 묻지 말고 직접 확인합니다. 한 작업에서 ${MAX_PEER_ROUNDS}번까지입니다.
+${
+  o.canHandoff
+    ? `- **인계(handoff)**: 당신의 일을 마친 뒤 다른 분야에서 이어서 해야 할 일을 그 직원에게 넘깁니다. 예: 구현을 마치고 검증을 QA 에게, 검증에서 찾은 결함을 만든 사람에게, 리뷰 지적을 작성자에게. 넘긴 일의 결과는 당신이 아니라 ${o.leadName ?? '상위'}이(가) 받습니다. 당신의 보고서에는 무엇을 누구에게 넘겼는지 적으세요. 같은 일을 주고받는 것은 ${MAX_HANDOFF_BACK}번까지이고, 그래도 안 풀리면 "상위 확인 요청"에 적습니다.\n`
+    : ''
+}- **결정(decisions)**: 작업하면서 정한 것 가운데 다른 직원도 따라야 하는 것(이름, 인터페이스, 파일 위치, 형식, 범위)을 한 줄씩 적으면 팀 결정 기록에 남아 모든 직원에게 전달됩니다. 이미 기록에 있는 것은 다시 적지 않습니다.
+- "팀 결정 기록"에 있는 것은 이미 정해진 것입니다. 다시 묻지 말고 그대로 따르세요. 따를 수 없는 이유가 있으면 그 이유를 보고서에 적습니다.`
+}
+
+/** 동료의 문의에 답하는 작업의 규칙 */
+export function askReportRules(asker: Lead): string {
+  return `
+
+## 답하는 방법
+- 이것은 같은 팀 ${asker.name}(${asker.role})의 문의입니다. 답은 사용자가 아니라 ${asker.name}에게 가고, ${asker.name}은(는) 답을 받아 자기 작업을 이어 갑니다.
+- 묻는 것에만 정확하고 짧게 답하세요. 필요하면 파일을 열어 확인하되, 파일을 고치거나 새 작업을 벌이지 않습니다.
+- 마지막 메시지를 아래 형식으로 끝내세요.
+## 보고
+**답**: (묻는 것에 대한 답. 모르면 모른다고 쓰고 누가 알 만한지 적습니다)
+**근거**: (확인한 파일과 위치. 없으면 "없음")`
+}
+
 /** 상위 직원에게 일을 받은 직원의 보고 규칙 (보고와 질문이 사용자가 아니라 맡긴 사람에게 간다) */
 export function leadReportRules(lead: Lead): string {
   const who = `${lead.name}(${lead.role})`
@@ -100,7 +157,12 @@ export function leadReportRules(lead: Lead): string {
 
 /** 마지막 메시지에서 맡기기·돌려보내기 블록을 꺼낸다. 없거나 형식이 틀리면 둘 다 빈 배열 */
 export function parseCoordination(text: string): Coordination {
-  const out: Coordination = { delegate: [], revise: [] }
+  const out: Coordination = { delegate: [], revise: [], ask: [], handoff: [], decisions: [] }
+  const assignment = (raw: unknown): DispatchAssignment | null => {
+    const a = raw as { employee?: unknown; title?: unknown; instructions?: unknown }
+    if (typeof a?.title !== 'string' || typeof a.instructions !== 'string' || !a.title.trim() || !a.instructions.trim()) return null
+    return { employeeId: a.employee ? String(a.employee).trim() : undefined, title: a.title.trim(), instructions: a.instructions.trim() }
+  }
   // 지시문 안에 코드블록이 들어 있어도 읽을 수 있게 중괄호 짝으로 찾는다. 블록을 둘로 나눠 써도 합친다
   for (const o of extractJsonObjects(text)) {
     if (Array.isArray(o.delegate)) {
@@ -109,6 +171,22 @@ export function parseCoordination(text: string): Coordination {
         if (typeof a?.title !== 'string' || typeof a.instructions !== 'string' || !a.title.trim() || !a.instructions.trim()) continue
         out.delegate.push({ employeeId: a.employee ? String(a.employee).trim() : undefined, title: a.title.trim(), instructions: a.instructions.trim() })
       }
+    }
+    if (Array.isArray(o.handoff)) {
+      for (const raw of o.handoff) {
+        const a = assignment(raw)
+        if (a) out.handoff.push(a)
+      }
+    }
+    if (Array.isArray(o.ask)) {
+      for (const raw of o.ask) {
+        const q = raw as { employee?: unknown; question?: unknown }
+        if (typeof q?.employee !== 'string' || typeof q.question !== 'string' || !q.employee.trim() || !q.question.trim()) continue
+        out.ask.push({ employee: q.employee.trim(), question: q.question.trim() })
+      }
+    }
+    if (Array.isArray(o.decisions)) {
+      for (const d of o.decisions) if (typeof d === 'string' && d.trim()) out.decisions.push(d.trim().replace(/\s+/g, ' ').slice(0, 300))
     }
     if (Array.isArray(o.revise)) {
       for (const raw of o.revise) {
@@ -119,5 +197,8 @@ export function parseCoordination(text: string): Coordination {
     }
   }
   out.delegate = out.delegate.slice(0, MAX_DELEGATE_TASKS)
+  out.handoff = out.handoff.slice(0, 3)
+  out.ask = out.ask.slice(0, 3)
+  out.decisions = out.decisions.slice(0, 8)
   return out
 }

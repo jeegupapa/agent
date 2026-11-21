@@ -158,9 +158,14 @@ export function isSettled(status: TeamTask['status']): boolean {
   return status === 'needs_review' || status === 'internal_review' || status === 'approved' || status === 'failed' || status === 'stopped'
 }
 
-/** 이 작업을 맡긴 직원의 작업 id (사용자가 직접 맡긴 작업이면 undefined) */
+/** 이 작업을 맡긴(또는 문의한) 직원의 작업 id. 사용자가 직접 맡긴 작업이면 undefined */
 export function parentOf(t: Pick<TeamTask, 'origin'>): string | undefined {
-  return t.origin?.kind === 'delegate' ? t.origin.parentTaskId : undefined
+  return t.origin?.kind === 'delegate' || t.origin?.kind === 'ask' ? t.origin.parentTaskId : undefined
+}
+
+/** 동료의 문의에 답하는 작업인지 */
+export function isAsk(t: Pick<TeamTask, 'origin'>): boolean {
+  return t.origin?.kind === 'ask'
 }
 
 /** 맡기기 깊이: 사용자가 직접 맡긴 작업은 0, 그 작업이 맡긴 작업은 1 … */

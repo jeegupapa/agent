@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { ClaudeRunner, drawAttention, type RunnerSink } from './claude'
-import { coordinatorRules, leadReportRules } from '../shared/delegate'
+import { askReportRules, coordinatorRules, leadReportRules, peerRules } from '../shared/delegate'
 import { extractJsonObjects } from '../shared/json'
 import {
   EMPLOYEE_PRESETS,
@@ -80,10 +80,14 @@ export class TeamRunner {
       `# 역할\n당신의 이름은 "${e.name}", 직함은 "${e.role}" 입니다. 전문 분야: ${e.specialty}\n\n` +
       `# 지시문\n${e.instructions.trim()}` +
       (args.memory ? `\n\n${args.memory.trim()}` : '') +
+      // 팀에서 이미 정한 것: 다시 묻지 않고 따른다
+      (args.decisions?.trim() ? `\n\n${args.decisions.trim()}` : '') +
       // 조율 역할(PM·기획자)은 같은 팀 직원에게 일을 맡기고 보고를 받아 검토한다
       (args.roster !== undefined ? coordinatorRules({ roster: args.roster, frontDoor: !args.lead }) : '') +
+      // 동료에게 직접 묻고(문의), 이어지는 일을 넘기고(인계), 정한 것을 남긴다(결정)
+      (args.peers !== undefined ? peerRules({ peers: args.peers, canHandoff: !!args.canHandoff, leadName: args.lead?.name }) : '') +
       // 직원에게 받은 일이면 보고와 질문이 사용자가 아니라 그 직원에게 간다
-      (args.lead ? leadReportRules(args.lead) : TEAM_REPORT_RULES)
+      (args.lead?.ask ? askReportRules(args.lead) : args.lead ? leadReportRules(args.lead) : TEAM_REPORT_RULES)
     )
   }
 

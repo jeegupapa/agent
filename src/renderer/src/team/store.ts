@@ -3,7 +3,8 @@
 // 팀은 세션마다 따로 꾸린다. 직원과 작업에는 속한 팀의 id(teamId)가 붙고, 화면에는 지금 세션의 팀 것만 보인다.
 // teamId 가 없는 것은 세션별 팀이 생기기 전에 만든 것으로, "기존 팀"(DEFAULT_TEAM_ID)에 속한다.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_TEAM_ID, type Employee, type TeamInfo, type TeamTask } from '../../../shared/types'
+import { DEFAULT_TEAM_ID, type Employee, type TeamDecision, type TeamInfo, type TeamTask } from '../../../shared/types'
+import { MAX_DECISIONS } from '../../../shared/delegate'
 import * as fb from '../firebase'
 
 const LOCAL_KEY = 'claude-cli-studio.team'
@@ -59,6 +60,9 @@ export interface TeamStore {
   upsertTeam: (t: TeamInfo) => void
   /** 팀과 그 팀의 직원·작업을 모두 지운다 */
   removeTeam: (id: string) => void
+  /** 팀 결정 기록에 추가한다 (같은 내용은 건너뛴다). 팀 정보가 아직 없으면 만든다 */
+  addDecisions: (teamId: string, by: string, texts: string[]) => void
+  removeDecision: (teamId: string, decisionId: string) => void
 }
 
 export function useTeamStore(user: fb.FbUser | null, firebaseEnabled: boolean): TeamStore {
@@ -179,6 +183,44 @@ export function useTeamStore(user: fb.FbUser | null, firebaseEnabled: boolean): 
   )
 
   // 일부 필드만 바꾼다. 작업 전체를 다시 쓰지 않으므로, 같은 순간에 다른 곳에서 바꾼 필드(상태 등)를 옛 값으로 덮지 않는다
+  // 팀 정보의 결정 기록을 고친다. 팀 정보가 아직 저장되지 않은 팀(기존 팀 등)이면 이때 만든다
+  const editDecisions = useCallback(
+    (teamId: string, edit: (list: TeamDecision[]) => TeamDecision[]) => {
+      const apply = (teams: TeamInfo[]): TeamInfo => {
+        const info = teams.find((t) => t.id === teamId) ?? {
+          id: teamId,
+          name: teamId === DEFAULT_TEAM_ID ? '기존 팀' : autoTeamName(),
+          createdAt: teamId === DEFAULT_TEAM_ID ? 0 : Date.now(),
+          autoName: teamId === DEFAULT_TEAM_ID ? undefined : true
+        }
+        return { ...info, decisions: edit(info.decisions ?? []).slice(-MAX_DECISIONS) }
+      }
+      setLocal((l) => ({ ...l, teams: upsert(l.teams, apply(l.teams)) }))
+      if (useFs && user) {
+        const next = apply(currentRef.current.teams)
+        fb.setDocument(user.uid, 'teams', teamId, next).catch((err) => setError(String(err)))
+      }
+    },
+    [useFs, user]
+  )
+  const addDecisions = useCallback(
+    (teamId: string, by: string, texts: string[]) => {
+      const clean = texts.map((t) => t.trim()).filter(Boolean)
+      if (clean.length === 0) return
+      editDecisions(teamId, (list) => {
+        const known = new Set(list.map((d) => d.text.replace(/\s+/g, '')))
+        const add = clean.filter((t) => !known.has(t.replace(/\s+/g, '')))
+        const now = Date.now()
+        return [...list, ...add.map((text, i) => ({ id: `${now}-${i}-${Math.random().toString(36).slice(2, 7)}`, at: now, by, text }))]
+      })
+    },
+    [editDecisions]
+  )
+  const removeDecision = useCallback(
+    (teamId: string, decisionId: string) => editDecisions(teamId, (list) => list.filter((d) => d.id !== decisionId)),
+    [editDecisions]
+  )
+
   const patchTask = useCallback(
     (id: string, patch: Partial<TeamTask> | ((t: TeamTask) => Partial<TeamTask>)) => {
       setLocal((l) => {
@@ -209,7 +251,9 @@ export function useTeamStore(user: fb.FbUser | null, firebaseEnabled: boolean): 
     patchTask,
     removeTask,
     upsertTeam,
-    removeTeam
+    removeTeam,
+    addDecisions,
+    removeDecision
   }
 }
 

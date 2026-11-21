@@ -187,6 +187,15 @@ export interface TeamInfo {
   name: string
   createdAt: number
   autoName?: boolean
+  /** 팀 결정 기록: 직원들이 정한 것과 사용자가 답한 것. 모든 직원에게 전달되어 같은 질문이 되풀이되지 않게 한다 */
+  decisions?: TeamDecision[]
+}
+export interface TeamDecision {
+  id: string
+  at: number
+  /** 정한 사람 (직원 이름 또는 "사용자") */
+  by: string
+  text: string
 }
 /** teamId 가 없는 직원·작업(세션별 팀이 생기기 전에 만든 것)이 속하는 팀 */
 export const DEFAULT_TEAM_ID = 'default'
@@ -276,7 +285,8 @@ export interface TeamTask {
   round: number
   /** 채팅창 요청을 팀장이 배분해 만든 작업이면 그 요청 id. 보고가 채팅으로 돌아간다 */
   /** 조율 역할의 직원(PM·기획자)이 맡긴 작업이면 그 직원의 작업 id. 끝나면 보고가 사용자가 아니라 그 작업으로 돌아간다 */
-  origin?: { kind: 'chat'; requestId: string } | { kind: 'delegate'; parentTaskId: string }
+  /** ask: 동료의 문의에 답하는 작업. 답이 문의한 직원의 작업(parentTaskId)으로 돌아간다 */
+  origin?: { kind: 'chat'; requestId: string } | { kind: 'delegate'; parentTaskId: string } | { kind: 'ask'; parentTaskId: string }
   /**
    * 이 작업이 다른 직원에게 맡겨 놓은 작업들 (팀 대기 중일 때). 작업 기록에 남겨 두어 앱을 다시 켜도
    * 보고가 이 작업으로 돌아온다. round 는 맡기기 → 보고 받기를 몇 번 했는지
@@ -307,8 +317,14 @@ export interface TeamStartArgs {
   teamStatus?: string
   /** 같은 팀 직원 목록. 있으면 다른 직원에게 일을 맡길 수 있다 (조율 역할이고 맡기기 깊이가 남았을 때만 전달) */
   roster?: string
-  /** 이 작업을 맡긴 직원. 없으면 사용자가 직접 맡긴 작업이다. 있으면 보고와 질문이 그 직원에게 간다 */
-  lead?: { name: string; role: string }
+  /** 이 작업을 맡긴 직원. 없으면 사용자가 직접 맡긴 작업이다. 있으면 보고와 질문이 그 직원에게 간다. ask 면 문의한 직원 */
+  lead?: { name: string; role: string; ask?: boolean }
+  /** 문의·인계할 수 있는 같은 팀 직원 목록. 문의에 답하는 작업에는 주지 않는다 */
+  peers?: string
+  /** 인계할 수 있는지 (상위가 살아 있을 때만) */
+  canHandoff?: boolean
+  /** 팀 결정 기록 (renderDecisions 결과). 이미 정해진 것으로 전달된다 */
+  decisions?: string
 }
 
 // ---------- 첨부 파일 ----------
