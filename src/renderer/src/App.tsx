@@ -20,7 +20,15 @@ import type {
   UpdateStatus,
   UsageSummary
 } from '../../shared/types'
-import { DEFAULT_TEAM_ID, DISPATCH_TASK_ID, EMPLOYEE_PRESETS, type MemoryItem, type TeamUsage } from '../../shared/types'
+import {
+  DEFAULT_TEAM_ID,
+  DEFAULT_TEAM_LIMITS,
+  DISPATCH_TASK_ID,
+  EMPLOYEE_PRESETS,
+  type MemoryItem,
+  type TeamLimits,
+  type TeamUsage
+} from '../../shared/types'
 import { Sidebar } from './components/Sidebar'
 import { SearchDialog } from './components/SearchDialog'
 import { MemoryDialog } from './memory/MemoryDialog'
@@ -50,7 +58,22 @@ import {
 } from '../../shared/delegate'
 import { teamOf, useScopedTeam, useTeamStore } from './team/store'
 import { AUTO, legacyToAuto } from '../../shared/models'
-import { EMPTY_RUNTIME, applyEvent, depthOf, deriveTaskPatch, isActive, isAsk, isSettled, needsUser, parentOf, type TaskRuntime } from './team/runtime'
+import {
+  EMPTY_RUNTIME,
+  applyEvent,
+  depthOf,
+  deriveTaskPatch,
+  isActive,
+  isAsk,
+  isSettled,
+  limitReached,
+  needsUser,
+  parentOf,
+  rootOf,
+  subtreeOf,
+  treeStats,
+  type TaskRuntime
+} from './team/runtime'
 import {
   DEFAULT_LAYOUT,
   LIMITS,
@@ -124,6 +147,26 @@ export default function App() {
   const coordinateRef = useRef<(taskId: string, cmd: Coordination, round: number) => void>(() => undefined)
   /** 작업이 더 맡기지 않고 끝났을 때: 그 작업이 보고받은 하위 작업을 승인 처리한다 */
   const finalizeRef = useRef<(taskId: string) => void>(() => undefined)
+  // 팀 한도 (이 PC 의 설정): 동시 작업 수, 요청당 작업 수, 요청당 사용량
+  const [limits, setLimits] = useState<TeamLimits>(() => {
+    try {
+      return { ...DEFAULT_TEAM_LIMITS, ...(JSON.parse(localStorage.getItem('claude-cli-studio.teamLimits') ?? '{}') as Partial<TeamLimits>) }
+    } catch {
+      return DEFAULT_TEAM_LIMITS
+    }
+  })
+  useEffect(() => localStorage.setItem('claude-cli-studio.teamLimits', JSON.stringify(limits)), [limits])
+  const limitsRef = useRef(limits)
+  limitsRef.current = limits
+  /** 동시 작업 수를 넘어 차례를 기다리는 작업 (자리가 나면 넣은 순서대로 시작한다) */
+  const queueRef = useRef<{ id: string; followUp?: string; opts: { stay?: boolean; employee?: Employee; resume?: boolean; note?: string }; at: number }[]>([])
+  /**
+   * 방금 시작해서 아직 목록에 "작업 중"으로 반영되지 않은 작업 → 시작한 시각.
+   * 같은 순간에 여러 작업을 시작할 때 수를 맞추려는 것이라 아주 잠깐만 유효하다
+   */
+  const startingRef = useRef(new Map<string, number>())
+  /** 대기 중인 작업이 있는 동안 대기열을 다시 확인하게 하는 값 */
+  const [queueTick, setQueueTick] = useState(0)
   /** 인계: 끝나는 작업이 이어지는 일을 동료에게 넘긴다 (같은 상위 아래의 작업으로) */
   const handoffRef = useRef<(from: TeamTask, list: DispatchAssignment[]) => void>(() => undefined)
   /** 보고를 돌려주려고 이어서 시작시킨 상위 작업 (같은 작업을 두 번 시작하지 않게) */
@@ -366,6 +409,7 @@ export default function App() {
       const leadTask = t ? teamRef.current.tasks.find((x) => x.id === parentOf(t)) : undefined
       const hasLead = !!leadTask && (leadTask.status === 'waiting_team' || isActive(leadTask.status))
       let wait = false
+      let blocked = ''
       if (!failed && t && e && t.status !== 'stopped') {
         const cmd = parseCoordination(next.lastAssistantText)
         // 문의에 답하는 작업은 답만 하고 끝난다 (더 맡기거나 묻거나 넘기지 않는다)
@@ -378,6 +422,19 @@ export default function App() {
         if (leaf) {
           cmd.ask = []
           cmd.handoff = []
+        }
+        // 한도: 이 요청이 작업 수나 사용량 한도에 닿았으면 더 맡기거나 묻거나 넘기지 않고 여기서 마무리한다
+        const over = limitReached(t, teamRef.current.tasks, limitsRef.current, (x) =>
+          x.id === t.id && event.kind === 'result' ? event.usage.totalCostUsd : (x.progress.costUsd ?? 0)
+        )
+        if (over && cmd.delegate.length + cmd.revise.length + cmd.ask.length + cmd.handoff.length > 0) {
+          cmd.delegate = []
+          cmd.revise = []
+          cmd.ask = []
+          cmd.handoff = []
+          blocked = `${over}에 도달해, 이 보고에 적힌 맡기기·문의·인계는 실행되지 않았습니다.`
+          const root = rootOf(t, teamRef.current.tasks)
+          teamRef.current.patchTask(root.id, { limitNote: `${over}에 도달해 더 맡기지 않고 마무리했습니다. 이어서 하려면 이 작업에 답변이나 수정 요청으로 "계속 진행"이라고 보내세요.` })
         }
         // 결정: 팀 결정 기록에 남겨 모든 직원에게 전달한다
         if (cmd.decisions.length > 0) teamRef.current.addDecisions(teamOf(t), e.name, cmd.decisions)
@@ -398,7 +455,10 @@ export default function App() {
       patchTaskRef.current(taskId, (cur) => {
         const patch = deriveTaskPatch(cur, event, next) ?? {}
         if (patch.status !== 'needs_review') return patch
-        return wait ? { ...patch, status: doneStatus } : { ...patch, status: doneStatus, delegation: undefined }
+        if (wait) return { ...patch, status: doneStatus }
+        // 한도 때문에 실행하지 않은 것이 있으면 보고서 끝에 적어, 보고를 받는 쪽이 오해하지 않게 한다
+        const report = blocked && patch.report ? `${patch.report}\n\n> (앱 알림) ${blocked}` : patch.report
+        return { ...patch, report, status: doneStatus, delegation: undefined }
       })
     })
   }, [applyBgTask])
@@ -448,6 +508,11 @@ export default function App() {
     reconciled.current = true
     Promise.all([window.api.teamRunning(), window.api.hostname()]).then(([ids, host]) => {
       for (const t of teamRef.current.tasks) {
+        // 대기열은 앱을 끄면 사라진다. 차례를 기다리던 작업은 중단으로 두어 "이어서 진행"으로 다시 시작할 수 있게 한다
+        if (t.status === 'queued' && !queueRef.current.some((q) => q.id === t.id) && (!t.runHost || t.runHost === host)) {
+          teamRef.current.patchTask(t.id, { status: 'stopped', finishedAt: Date.now(), error: '앱이 종료되어 차례를 기다리던 작업이 시작되지 못했습니다. "이어서 진행"으로 다시 시작할 수 있습니다.' })
+          continue
+        }
         if (!isActive(t.status) || ids.includes(t.id)) continue
         // 다른 PC 에서 실행한 작업은 그 PC 에서 아직 돌고 있을 수 있으므로 건드리지 않는다
         if (t.runHost && t.runHost !== host) continue
@@ -462,13 +527,34 @@ export default function App() {
    * 작업 시작. opts.stay 면 팀 화면으로 전환하지 않고(채팅에서 배분한 작업), opts.employee 로
    * 방금 채용해 아직 team.employees 에 반영되지 않은 직원을 넘길 수 있다.
    */
+  /** 이 PC 에서 지금 실행 중인 직원 작업 수 (방금 시작해 아직 목록에 반영되지 않은 것 포함) */
+  const activeHere = (): number => {
+    const active = teamRef.current.tasks.filter((t) => isActive(t.status) && (!t.runHost || !hostname || t.runHost === hostname))
+    const now = Date.now()
+    let pending = 0
+    for (const [id, at] of startingRef.current) {
+      // 목록에 반영됐거나 잠깐이 지났으면 표식을 지운다 (오래 두면 이미 끝난 작업을 실행 중으로 세게 된다)
+      if (active.some((t) => t.id === id) || now - at > 1500) startingRef.current.delete(id)
+      else pending++
+    }
+    return active.length + pending
+  }
+
   const startTask = (
     task: TeamTask,
     followUp?: string,
-    opts: { stay?: boolean; employee?: Employee; resume?: boolean; note?: string } = {}
+    opts: { stay?: boolean; employee?: Employee; resume?: boolean; note?: string; fromQueue?: boolean } = {}
   ): void => {
     const employee = opts.employee ?? store.employees.find((e) => e.id === task.employeeId)
     if (!employee) return
+    // 동시에 실행하는 작업 수를 넘으면 대기시킨다. 자리가 나면 넣은 순서대로 시작한다
+    if (!opts.fromQueue && activeHere() >= limitsRef.current.maxParallel) {
+      queueRef.current.push({ id: task.id, followUp, opts, at: Date.now() })
+      team.upsertTask({ ...task, status: 'queued', finishedAt: undefined, error: undefined, approvedBy: undefined })
+      if (!opts.stay) setMode('team')
+      return
+    }
+    startingRef.current.set(task.id, Date.now())
     const started: TeamTask = {
       ...task,
       // 중단됐던 작업을 이어 가는 것은 수정 요청이 아니므로 "작업 중"으로 표시한다
@@ -531,6 +617,12 @@ export default function App() {
   const resumeTask = (t: TeamTask, opts: { stay?: boolean } = {}): void => {
     if (t.sessionId) startTask(t, RESUME_PROMPT, { resume: true, stay: opts.stay })
     else startTask({ ...t, sessionId: undefined }, undefined, { stay: opts.stay })
+  }
+  /** 요청 하나(이 작업과 그 아래 전부)를 모두 중단한다: 실행 중·대기 중·보고를 기다리는 작업 모두 */
+  const stopTree = (rootId: string): void => {
+    for (const t of subtreeOf(rootId, store.tasks)) {
+      if (isActive(t.status) || t.status === 'waiting_team' || t.status === 'queued') stopTask(t.id)
+    }
   }
   /** 직원 한 명의 진행 중인 작업을 모두 중단 */
   const stopEmployee = (employeeId: string): void => {
@@ -599,8 +691,16 @@ export default function App() {
         : `# 수정 요청 (${round}차)\n\n${comment}\n\n` +
           `이전 작업을 이어서 반영하세요. 끝나면 다시 "## 보고" 형식으로 보고하세요.`
     // 채팅에서 배분된 작업은 채팅에 머문다
-    // 사용자가 다시 지시한 것이므로 맡기기 횟수는 처음부터 센다
-    startTask({ ...t, reviews, round, delegation: undefined }, followUp, { stay: t.origin?.kind === 'chat' })
+    // 사용자가 다시 지시한 것이므로 맡기기 횟수와 한도는 지금부터 다시 센다
+    const root = rootOf(t, store.tasks)
+    const stats = treeStats(subtreeOf(root.id, store.tasks))
+    const limitBase = { cost: stats.cost, tasks: stats.tasks }
+    if (root.id !== t.id) store.patchTask(root.id, { limitBase, limitNote: undefined })
+    startTask(
+      { ...t, reviews, round, delegation: undefined, ...(root.id === t.id ? { limitBase, limitNote: undefined } : {}) },
+      followUp,
+      { stay: t.origin?.kind === 'chat' }
+    )
   }
 
   // ----- 채팅 요청 → 팀장 배분 -----
@@ -715,12 +815,15 @@ export default function App() {
     const reports = done.filter((t) => !isAsk(t))
     const emp = store.employees.find((e) => e.id === parent.employeeId)
     const coordinator = !!emp && isTeamAware(emp) && depthOf(parent, store.tasks) < MAX_DEPTH
-    const last = round >= (coordinator ? MAX_AUTO_ROUNDS : MAX_PEER_ROUNDS)
+    const over = limitReached(parent, store.tasks, limits)
+    const last = round >= (coordinator ? MAX_AUTO_ROUNDS : MAX_PEER_ROUNDS) || !!over
+    const overText = over ? `(앱 알림) ${over}에 도달했습니다. 이 요청에서는 더 맡기거나 묻거나 넘길 수 없습니다.\n\n` : ''
     const answerText = answers.length ? `# 문의에 대한 답\n\n${renderReports(answers, store.employees)}\n\n` : ''
     // 문의만 했던 경우: 답을 받아 원래 작업을 이어 간다
     if (reports.length === 0 && answers.length > 0) {
       return (
         answerText +
+        overText +
         '위 답을 바탕으로 원래 작업을 이어서 진행하세요. ' +
         (last ? '문의는 여기까지입니다. 더 묻지 말고, 남은 의문은 가장 무난한 쪽으로 정해 진행한 뒤 보고서에 적으세요. ' : '') +
         '끝나면 "## 보고" 형식으로 보고하세요.'
@@ -728,6 +831,7 @@ export default function App() {
     }
     return (
       answerText +
+      overText +
       `# 맡긴 작업의 보고 (${round}차)\n\n${reports.length ? renderReports(reports, store.employees) : '(돌아온 보고가 없습니다)'}\n\n` +
       '## 할 일\n' +
       '1. 각 결과가 지시와 완료 기준을 충족하는지 확인하세요. 보고만 믿지 말고 필요하면 파일을 열어 봅니다.\n' +
@@ -874,6 +978,32 @@ export default function App() {
       if (parentOf(c) === taskId && c.status === 'internal_review') store.patchTask(c.id, { status: 'approved', approvedBy: who })
     }
   }
+
+  // 자리가 나면 대기 중인 작업을 넣은 순서대로 시작한다
+  useEffect(() => {
+    if (queueRef.current.length === 0) return
+    const keep: typeof queueRef.current = []
+    for (const item of queueRef.current) {
+      const cur = store.tasks.find((t) => t.id === item.id)
+      // 방금 넣은 작업은 이 시점의 목록에 아직 없거나 상태가 반영되지 않았을 수 있다. 잠깐은 기다려 준다
+      const young = Date.now() - item.at < 8000
+      if (!cur || cur.status !== 'queued') {
+        if (young) keep.push(item)
+        continue
+      }
+      if (keep.length > 0 || activeHere() >= limits.maxParallel) {
+        keep.push(item)
+        continue
+      }
+      startTask(cur, item.followUp, { ...item.opts, fromQueue: true, stay: true })
+    }
+    queueRef.current = keep
+    // 아직 기다리는 것이 있으면 조금 뒤에 다시 본다 (작업 목록이 바뀌지 않아도 자리가 났을 수 있다)
+    if (keep.length === 0) return
+    const timer = setTimeout(() => setQueueTick((n) => n + 1), 2000)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.tasks, limits.maxParallel, queueTick])
 
   // 맡긴 작업이 모두 끝난 "팀 대기" 작업에게 보고를 돌려주고 이어서 진행시킨다.
   // 연결은 작업 기록(delegation)에 남아 있으므로 앱을 다시 켠 뒤에도 이어진다
@@ -1441,6 +1571,9 @@ export default function App() {
           onImportEmployees={scoped.importEmployees}
           onDeleteTeam={deleteTeam}
           decisions={store.teams.find((x) => x.id === teamId)?.decisions ?? []}
+          limits={limits}
+          onChangeLimits={setLimits}
+          onStopTree={stopTree}
           onRemoveDecision={(id) => store.removeDecision(teamId, id)}
           onSetTeamPermission={(mode) => {
             for (const e of team.employees) if (e.permissionMode !== mode) store.upsertEmployee({ ...e, permissionMode: mode, updatedAt: Date.now() })

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import type { Employee, PermissionMode, ReviewDecision, TeamDecision, TeamTask } from '../../../shared/types'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
+import type { Employee, PermissionMode, ReviewDecision, TeamDecision, TeamLimits, TeamTask } from '../../../shared/types'
 import { AnswerBox, extractQuestions } from './AnswerBox'
 import { Markdown } from '../components/Markdown'
 import { ToolChip } from '../components/ToolChip'
 import { EmployeeForm, TaskForm } from './TeamForms'
-import { EMPTY_RUNTIME, STATUS_LABEL, isActive, isAsk, needsUser, parentOf, type TaskRuntime } from './runtime'
+import { EMPTY_RUNTIME, STATUS_LABEL, isActive, isAsk, needsUser, parentOf, subtreeOf, treeStats, type TaskRuntime } from './runtime'
 import type { TeamRow } from './store'
 import { useModelCatalog } from '../models'
 import { modelShort } from '../../../shared/models'
@@ -27,6 +27,11 @@ export interface TeamViewProps {
   onImportEmployees: (fromTeamId: string) => number
   /** 팀과 그 팀의 직원·작업 삭제. 진행 중인 작업이 있어 지우지 못했으면 false */
   onDeleteTeam: (id: string) => boolean
+  /** 팀 한도 (이 PC 의 설정) */
+  limits: TeamLimits
+  onChangeLimits: (l: TeamLimits) => void
+  /** 요청 하나(작업과 그 아래 전부)를 모두 중단 */
+  onStopTree: (rootId: string) => void
   /** 팀 결정 기록: 직원들이 정한 것과 사용자가 답한 것. 모든 직원에게 전달된다 */
   decisions: TeamDecision[]
   onRemoveDecision: (id: string) => void
@@ -121,6 +126,23 @@ export function TeamView(p: TeamViewProps) {
   const importable = p.teams.filter((t) => t.id !== p.teamId && t.employees > 0)
   const [notice, setNotice] = useState('')
   const [showDecisions, setShowDecisions] = useState(false)
+  const [showLimits, setShowLimits] = useState(false)
+  // 요청별 트리: 펼쳐 둔 작업 id. 내부 작업은 기본으로 접혀 있다
+  const [openTree, setOpenTree] = useState<Set<string>>(new Set())
+  const childrenOf = (id: string): TeamTask[] => p.tasks.filter((x) => parentOf(x) === id).sort((a, b) => a.createdAt - b.createdAt)
+  /** 맨 위 작업인지 (사용자가 직접 맡겼거나, 맡긴 작업이 지워진 경우) */
+  const isRoot = (t: TeamTask): boolean => !p.tasks.some((x) => x.id === parentOf(t))
+  // 고른 작업이 접힌 트리 안에 있으면 그 위쪽을 펼친다
+  useEffect(() => {
+    const ids: string[] = []
+    for (let cur = p.tasks.find((x) => x.id === p.selectedTaskId); cur; cur = p.tasks.find((x) => x.id === parentOf(cur!))) {
+      const pid = parentOf(cur)
+      if (!pid || ids.includes(pid)) break
+      ids.push(pid)
+    }
+    if (ids.some((id) => !openTree.has(id))) setOpenTree((o) => new Set([...o, ...ids]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.selectedTaskId])
   // 이 팀 직원들의 권한 모드 요약 (예: "자동 판단 3 · 매번 확인 1")
   const modeSummary =
     Object.entries(p.employees.reduce<Record<string, number>>((m, e) => ({ ...m, [e.permissionMode]: (m[e.permissionMode] ?? 0) + 1 }), {}))
@@ -206,6 +228,9 @@ export function TeamView(p: TeamViewProps) {
           onClick={() => setShowDecisions(true)}
         >
           결정 기록 {p.decisions.length}
+        </button>
+        <button title="동시에 실행하는 작업 수, 요청 하나에 둘 수 있는 작업 수와 사용량의 한도" onClick={() => setShowLimits(true)}>
+          한도
         </button>
         <button
           className="ghost"
@@ -336,46 +361,77 @@ export function TeamView(p: TeamViewProps) {
               </div>
             )}
             {GROUPS.map((g) => {
-              const list = tasks.filter(g.has)
+              // 직원으로 걸러 볼 때는 그 직원의 작업만 한 줄씩. 아니면 요청(맨 위 작업)별로 묶어 내부 작업은 접어 둔다.
+              // 사용자가 봐야 하는 작업은 어느 깊이에 있든 "확인이 필요한 작업"에 따로 꺼내 보여 준다
+              const flat = !!filterEmployee
+              const list = tasks.filter((t) => g.has(t) && (flat || g.key === 'attention' || isRoot(t)))
               if (list.length === 0) return null
+              const row = (t: TeamTask, depth: number, tree: boolean): ReactElement => {
+                const e = empById.get(t.employeeId)
+                const kids = tree ? childrenOf(t.id) : []
+                const opened = openTree.has(t.id)
+                const stats = kids.length > 0 ? treeStats(subtreeOf(t.id, p.tasks).slice(1)) : null
+                return (
+                  <div key={t.id}>
+                    <div
+                      className={`task-row status-${t.status} ${t.id === p.selectedTaskId ? 'selected' : ''} ${depth > 0 ? 'child' : ''}`}
+                      style={depth > 0 ? { marginLeft: depth * 18 } : undefined}
+                      onClick={() => p.onSelectTask(t.id)}
+                    >
+                      {kids.length > 0 ? (
+                        <button
+                          className="tree-toggle"
+                          title={opened ? '내부 작업 접기' : '내부 작업 펼치기'}
+                          onClick={(ev) => {
+                            ev.stopPropagation()
+                            setOpenTree((o) => {
+                              const n = new Set(o)
+                              if (n.has(t.id)) n.delete(t.id)
+                              else n.add(t.id)
+                              return n
+                            })
+                          }}
+                        >
+                          {opened ? '▾' : '▸'}
+                        </button>
+                      ) : (
+                        tree && depth > 0 && <span className="tree-toggle spacer" />
+                      )}
+                      <span className="task-emoji" title={e ? `${e.name} · ${e.role}` : ''}>
+                        {e?.emoji ?? '❔'}
+                      </span>
+                      <div className="task-main">
+                        <div className="task-title">
+                          {t.title}
+                          {isAsk(t) && <span className="badge">문의</span>}
+                          {t.round > 0 && <span className="badge">{t.round}차 수정</span>}
+                          {t.status === 'needs_review' && extractQuestions(t.report).length > 0 && (
+                            <span className="badge ask" title="보고서에 직원의 확인 요청이 있습니다. 열어서 답해 주세요">
+                              ❓ 확인 요청 {extractQuestions(t.report).length}
+                            </span>
+                          )}
+                        </div>
+                        <div className="task-sub muted small">
+                          {e?.name ?? '삭제된 직원'}
+                          {(!tree || depth === 0) && leadName(t) && ` ← ${leadName(t)}`} · {isActive(t.status) ? fmtDuration(t.startedAt) + ' 경과' : fmtTime(t.finishedAt ?? t.createdAt)}
+                          {t.progress.toolUses > 0 && ` · 도구 ${t.progress.toolUses}회`}
+                          {isActive(t.status) && t.progress.lastTool && ` · ${t.progress.lastTool}`}
+                          {stats &&
+                            ` · 내부 작업 ${stats.tasks}건${stats.active ? ` (진행 ${stats.active})` : ''}${stats.queued ? ` (대기 ${stats.queued})` : ''}${stats.failed ? ` (실패 ${stats.failed})` : ''}`}
+                        </div>
+                      </div>
+                      <span className={`task-status ${t.status}`}>{STATUS_LABEL[t.status]}</span>
+                    </div>
+                    {tree && opened && kids.map((k) => row(k, depth + 1, true))}
+                  </div>
+                )
+              }
               return (
                 <div key={g.key} className="task-group">
                   <h4 title={g.hint}>
                     {g.label} <span className="muted">{list.length}</span>
                   </h4>
-                  {list.map((t) => {
-                    const e = empById.get(t.employeeId)
-                    return (
-                      <div
-                        key={t.id}
-                        className={`task-row status-${t.status} ${t.id === p.selectedTaskId ? 'selected' : ''}`}
-                        onClick={() => p.onSelectTask(t.id)}
-                      >
-                        <span className="task-emoji" title={e ? `${e.name} · ${e.role}` : ''}>
-                          {e?.emoji ?? '❔'}
-                        </span>
-                        <div className="task-main">
-                          <div className="task-title">
-                            {t.title}
-                            {isAsk(t) && <span className="badge">문의</span>}
-                            {t.round > 0 && <span className="badge">{t.round}차 수정</span>}
-                            {t.status === 'needs_review' && extractQuestions(t.report).length > 0 && (
-                              <span className="badge ask" title="보고서에 직원의 확인 요청이 있습니다. 열어서 답해 주세요">
-                                ❓ 확인 요청 {extractQuestions(t.report).length}
-                              </span>
-                            )}
-                          </div>
-                          <div className="task-sub muted small">
-                            {e?.name ?? '삭제된 직원'}
-                            {leadName(t) && ` ← ${leadName(t)}`} · {isActive(t.status) ? fmtDuration(t.startedAt) + ' 경과' : fmtTime(t.finishedAt ?? t.createdAt)}
-                            {t.progress.toolUses > 0 && ` · 도구 ${t.progress.toolUses}회`}
-                            {isActive(t.status) && t.progress.lastTool && ` · ${t.progress.lastTool}`}
-                          </div>
-                        </div>
-                        <span className={`task-status ${t.status}`}>{STATUS_LABEL[t.status]}</span>
-                      </div>
-                    )
-                  })}
+                  {list.map((t) => row(t, 0, !flat && isRoot(t)))}
                 </div>
               )
             })}
@@ -402,6 +458,12 @@ export function TeamView(p: TeamViewProps) {
                 .sort((a, b) => a.createdAt - b.createdAt)
                 .map((x) => ({ task: x, employee: empById.get(x.employeeId) }))}
               onOpenTask={p.onSelectTask}
+              tree={(() => {
+                const all = subtreeOf(selected.id, p.tasks)
+                return all.length > 1 ? { ...treeStats(all), stoppable: all.some((x) => isActive(x.status) || x.status === 'queued' || x.status === 'waiting_team') } : undefined
+              })()}
+              budgetUsd={p.limits.budgetUsd}
+              onStopTree={() => p.onStopTree(selected.id)}
               onRerun={() => p.onRerunTask(selected)}
               onDelete={() => {
                 if (confirm(`"${selected.title}" 작업을 삭제할까요?`)) {
@@ -417,6 +479,7 @@ export function TeamView(p: TeamViewProps) {
         </section>
       </div>
 
+      {showLimits && <LimitsDialog limits={p.limits} onSave={p.onChangeLimits} onClose={() => setShowLimits(false)} />}
       {showDecisions && (
         <div className="modal-backdrop" onClick={() => setShowDecisions(false)}>
           <div className="modal" onClick={(ev) => ev.stopPropagation()}>
@@ -484,6 +547,57 @@ export function TeamView(p: TeamViewProps) {
   )
 }
 
+function LimitsDialog(p: { limits: TeamLimits; onSave: (l: TeamLimits) => void; onClose: () => void }) {
+  const [draft, setDraft] = useState({ maxParallel: String(p.limits.maxParallel), maxTasks: String(p.limits.maxTasks), budgetUsd: String(p.limits.budgetUsd) })
+  const num = (x: string, min: number, max: number, fallback: number): number => {
+    const n = Number(x)
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback
+  }
+  return (
+    <div className="modal-backdrop" onClick={p.onClose}>
+      <div className="modal" onClick={(ev) => ev.stopPropagation()}>
+        <h3>팀 한도</h3>
+        <p className="muted small">팀이 한꺼번에 너무 많이 벌이지 않게 하는 한도입니다. 이 PC 에 저장되고, 다음에 시작하는 작업부터 적용됩니다.</p>
+        <label className="field">
+          <span>동시에 실행하는 작업 수 (1~12)</span>
+          <input className="text" type="number" min={1} max={12} value={draft.maxParallel} onChange={(e) => setDraft({ ...draft, maxParallel: e.target.value })} />
+          <span className="muted small">넘는 작업은 "대기"로 두었다가 자리가 나면 순서대로 시작합니다.</span>
+        </label>
+        <label className="field">
+          <span>요청 하나에 둘 수 있는 작업 수 (0 = 한도 없음)</span>
+          <input className="text" type="number" min={0} max={500} value={draft.maxTasks} onChange={(e) => setDraft({ ...draft, maxTasks: e.target.value })} />
+          <span className="muted small">맨 위 작업과 그 아래의 맡긴 작업·넘긴 작업·문의를 모두 셉니다.</span>
+        </label>
+        <label className="field">
+          <span>요청 하나의 사용량 한도, 달러 (0 = 한도 없음)</span>
+          <input className="text" type="number" min={0} step={1} value={draft.budgetUsd} onChange={(e) => setDraft({ ...draft, budgetUsd: e.target.value })} />
+          <span className="muted small">API 요금으로 환산한 금액입니다(구독 플랜에서는 실제 청구액이 아니라 사용량의 척도입니다). 작업 상세의 "이 요청 전체"에 지금 값이 나옵니다.</span>
+        </label>
+        <p className="muted small">
+          한도에 닿으면 실행 중인 작업은 끝까지 가고, 새로 맡기거나 묻거나 넘기는 것만 멈춥니다. PM 이 지금까지의 결과로 보고하며,
+          그 작업에 "계속 진행"이라고 답하면 한도만큼 다시 쓸 수 있습니다.
+        </p>
+        <div className="modal-actions">
+          <button onClick={p.onClose}>취소</button>
+          <button
+            className="primary"
+            onClick={() => {
+              p.onSave({
+                maxParallel: Math.round(num(draft.maxParallel, 1, 12, p.limits.maxParallel)),
+                maxTasks: Math.round(num(draft.maxTasks, 0, 500, p.limits.maxTasks)),
+                budgetUsd: num(draft.budgetUsd, 0, 100000, p.limits.budgetUsd)
+              })
+              p.onClose()
+            }}
+          >
+            저장
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function TaskDetail(p: {
   task: TeamTask
   employee?: Employee
@@ -502,6 +616,10 @@ function TaskDetail(p: {
   /** 이 작업이 다른 직원에게 맡긴 작업들 */
   subtasks: { task: TeamTask; employee?: Employee }[]
   onOpenTask: (id: string) => void
+  /** 이 작업과 그 아래 전부의 합계 (아래에 작업이 있을 때만) */
+  tree?: { tasks: number; active: number; queued: number; failed: number; tokens: number; cost: number; stoppable: boolean }
+  budgetUsd: number
+  onStopTree: () => void
   onRerun: () => void
   onDelete: () => void
   onReview: (decision: ReviewDecision, comment: string) => void
@@ -582,8 +700,17 @@ function TaskDetail(p: {
         </button>
       </div>
 
-      {(p.lead || p.subtasks.length > 0 || t.status === 'internal_review' || t.status === 'waiting_team') && (
+      {(p.lead || p.subtasks.length > 0 || t.status === 'internal_review' || t.status === 'waiting_team' || t.limitNote) && (
         <div className="task-flow small">
+          {t.limitNote && <div className="notice">{t.limitNote}</div>}
+          {p.tree && (
+            <div className="muted" title="이 작업과 그 아래의 모든 작업(맡긴 것, 넘긴 것, 문의)을 합친 값입니다. 사용량은 API 요금으로 환산한 금액입니다">
+              이 요청 전체: 작업 {p.tree.tasks}건
+              {p.tree.active > 0 && ` · 진행 ${p.tree.active}`}
+              {p.tree.queued > 0 && ` · 대기 ${p.tree.queued}`} · 토큰 {(p.tree.tokens / 1000).toFixed(1)}k · 사용량 ${p.tree.cost.toFixed(2)}
+              {p.budgetUsd > 0 && ` (한도 $${p.budgetUsd})`}
+            </div>
+          )}
           {p.lead && (
             <div>
               <span className="muted">{isAsk(t) ? '문의한 사람 ' : '맡긴 사람 '}</span>
@@ -697,9 +824,14 @@ function TaskDetail(p: {
       )}
 
       <div className="task-actions">
-        {(active || t.status === 'waiting_team') && (
-          <button className="danger" onClick={p.onStop} title={t.status === 'waiting_team' ? '보고를 기다리는 것을 그만둡니다. 맡긴 작업은 계속 진행됩니다' : undefined}>
+        {(active || t.status === 'waiting_team' || t.status === 'queued') && (
+          <button className="danger" onClick={p.onStop} title={t.status === 'waiting_team' ? '보고를 기다리는 것을 그만둡니다. 맡긴 작업은 계속 진행됩니다' : t.status === 'queued' ? '차례를 기다리는 것을 그만둡니다' : undefined}>
             중단
+          </button>
+        )}
+        {p.tree?.stoppable && (
+          <button className="danger" onClick={p.onStopTree} title="이 작업과 그 아래의 실행 중·대기 중인 작업을 모두 중단합니다">
+            모두 중단
           </button>
         )}
         {t.status === 'waiting_team' && (

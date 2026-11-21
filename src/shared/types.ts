@@ -197,6 +197,17 @@ export interface TeamDecision {
   by: string
   text: string
 }
+/** 팀이 한꺼번에 너무 많이 벌이지 않게 하는 한도 (이 PC 의 설정) */
+export interface TeamLimits {
+  /** 동시에 실행하는 직원 작업 수. 넘는 작업은 대기했다가 자리가 나면 시작한다 */
+  maxParallel: number
+  /** 요청 하나(맨 위 작업과 그 아래 전부)에 둘 수 있는 작업 수. 0 이면 한도 없음 */
+  maxTasks: number
+  /** 요청 하나가 쓸 수 있는 사용량 (API 요금으로 환산한 달러). 0 이면 한도 없음 */
+  budgetUsd: number
+}
+export const DEFAULT_TEAM_LIMITS: TeamLimits = { maxParallel: 4, maxTasks: 30, budgetUsd: 0 }
+
 /** teamId 가 없는 직원·작업(세션별 팀이 생기기 전에 만든 것)이 속하는 팀 */
 export const DEFAULT_TEAM_ID = 'default'
 
@@ -294,6 +305,13 @@ export interface TeamTask {
   delegation?: { round: number; taskIds: string[] }
   /** 사용자 대신 이 작업을 승인한 직원(맡긴 사람)의 이름 */
   approvedBy?: string
+  /**
+   * 맨 위 작업에만: 사용자가 마지막으로 지시했을 때 이 요청(이 작업과 그 아래 전부)이 쓴 사용량과 작업 수.
+   * 한도는 그 뒤로 늘어난 만큼에 건다 (사용자가 "계속"이라고 하면 다시 한도만큼 쓸 수 있다)
+   */
+  limitBase?: { cost: number; tasks: number }
+  /** 맨 위 작업에만: 한도에 걸려 더 맡기지 않고 마무리했다는 안내 */
+  limitNote?: string
   /** 이 작업을 실행한 PC 이름. 작업 목록은 계정으로 동기화되지만 실행과 권한 승인은 그 PC 에서만 할 수 있다 */
   runHost?: string
 }

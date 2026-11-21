@@ -1,5 +1,5 @@
 // 팀 작업의 실시간 상태: 이벤트 → 트랜스크립트(items/toolCalls) 와 작업 진행 정보 갱신
-import type { ClaudeEvent, TeamTask, ToolCallRecord } from '../../../shared/types'
+import type { ClaudeEvent, TeamLimits, TeamTask, ToolCallRecord } from '../../../shared/types'
 import type { ChatItem } from '../components/Chat'
 
 export interface TaskRuntime {
@@ -186,4 +186,53 @@ export function depthOf(t: TeamTask, tasks: TeamTask[]): number {
 /** 사용자가 확인해야 하는 작업인지: 사용자의 검토 요청, 권한 승인 대기, 그리고 사용자가 직접 맡긴 작업의 실패 */
 export function needsUser(t: TeamTask): boolean {
   return t.status === 'needs_review' || t.status === 'waiting_permission' || (t.status === 'failed' && !parentOf(t))
+}
+
+/** 이 작업이 속한 요청의 맨 위 작업 (사용자가 직접 맡긴 작업) */
+export function rootOf(t: TeamTask, tasks: TeamTask[]): TeamTask {
+  let cur = t
+  const seen = new Set<string>()
+  for (;;) {
+    const pid = parentOf(cur)
+    if (!pid || seen.has(cur.id)) return cur
+    seen.add(cur.id)
+    const parent = tasks.find((x) => x.id === pid)
+    if (!parent) return cur
+    cur = parent
+  }
+}
+
+/** 한 작업과 그 아래의 모든 작업 (맡긴 것, 넘긴 것, 문의). 첫 항목이 그 작업 자신 */
+export function subtreeOf(rootId: string, tasks: TeamTask[]): TeamTask[] {
+  const root = tasks.find((t) => t.id === rootId)
+  if (!root) return []
+  const out = [root]
+  for (let i = 0; i < out.length; i++) for (const t of tasks) if (parentOf(t) === out[i].id && !out.includes(t)) out.push(t)
+  return out
+}
+
+/** 요청 하나의 합계: 작업 수, 진행·대기·실패 수, 토큰, 사용량(API 요금 환산) */
+export function treeStats(tree: TeamTask[]): { tasks: number; active: number; queued: number; failed: number; tokens: number; cost: number } {
+  return {
+    tasks: tree.length,
+    active: tree.filter((t) => isActive(t.status)).length,
+    queued: tree.filter((t) => t.status === 'queued').length,
+    failed: tree.filter((t) => t.status === 'failed').length,
+    tokens: tree.reduce((n, t) => n + (t.progress.totalTokens ?? 0), 0),
+    cost: tree.reduce((n, t) => n + (t.progress.costUsd ?? 0), 0)
+  }
+}
+
+/**
+ * 이 작업이 속한 요청이 한도에 닿았으면 그 이유를 글로 돌려준다 (닿지 않았으면 undefined).
+ * costOf 는 방금 끝난 작업처럼 아직 기록에 반영되지 않은 사용량을 넣을 때 쓴다.
+ */
+export function limitReached(t: TeamTask, tasks: TeamTask[], limits: TeamLimits, costOf?: (x: TeamTask) => number): string | undefined {
+  const root = rootOf(t, tasks)
+  const tree = subtreeOf(root.id, tasks)
+  const base = root.limitBase ?? { cost: 0, tasks: 0 }
+  if (limits.maxTasks > 0 && tree.length - base.tasks >= limits.maxTasks) return `요청 하나에 둘 수 있는 작업 수(${limits.maxTasks}건)`
+  const cost = tree.reduce((n, x) => n + (costOf ? costOf(x) : (x.progress.costUsd ?? 0)), 0)
+  if (limits.budgetUsd > 0 && cost - base.cost >= limits.budgetUsd) return `요청 하나의 사용량 한도($${limits.budgetUsd})`
+  return undefined
 }
