@@ -791,3 +791,12 @@ button.pbtn.accent:hover:not(:disabled) { color: var(--text); background: rgba(2
 .team-switch select { width: auto; max-width: 340px; padding: 4px 8px; font-size: 12px; }
 .team-switch button { white-space: nowrap; font-size: 12px; padding: 4px 10px; }
 .team-others { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); margin-left: auto; }
+
+/* 팀의 내부 흐름: 팀 대기 / 내부 검토, 맡긴 사람과 맡긴 작업 */
+.task-status.waiting_team, .task-status.internal_review { color: var(--muted); border: 1px solid var(--border); background: transparent; }
+.task-flow { padding: 8px 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.task-subs { display: flex; flex-direction: column; gap: 4px; }
+.task-sub-row { display: flex; align-items: center; gap: 8px; text-align: left; padding: 4px 8px; font-size: 12px; background: var(--bg-2); }
+.task-sub-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.linkish { border: none; background: transparent; padding: 0; color: var(--accent-2); font-size: inherit; cursor: pointer; }
+button.linkish:hover { text-decoration: underline; }

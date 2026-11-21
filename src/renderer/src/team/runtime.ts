@@ -140,12 +140,45 @@ export const STATUS_LABEL: Record<TeamTask['status'], string> = {
   running: '작업 중',
   waiting_permission: '승인 필요',
   needs_review: '검토 요청',
+  internal_review: '내부 검토',
+  waiting_team: '팀 대기',
   approved: '승인됨',
   changes_requested: '수정 중',
   failed: '실패',
   stopped: '중단됨'
 }
 
+/** 지금 Claude 세션이 돌고 있는 상태 */
 export function isActive(status: TeamTask['status']): boolean {
   return status === 'running' || status === 'waiting_permission' || status === 'changes_requested'
+}
+
+/** 실행이 끝나 더 진행되지 않는 상태 (맡긴 쪽에서 보고를 받아 갈 수 있다) */
+export function isSettled(status: TeamTask['status']): boolean {
+  return status === 'needs_review' || status === 'internal_review' || status === 'approved' || status === 'failed' || status === 'stopped'
+}
+
+/** 이 작업을 맡긴 직원의 작업 id (사용자가 직접 맡긴 작업이면 undefined) */
+export function parentOf(t: Pick<TeamTask, 'origin'>): string | undefined {
+  return t.origin?.kind === 'delegate' ? t.origin.parentTaskId : undefined
+}
+
+/** 맡기기 깊이: 사용자가 직접 맡긴 작업은 0, 그 작업이 맡긴 작업은 1 … */
+export function depthOf(t: TeamTask, tasks: TeamTask[]): number {
+  let depth = 0
+  let cur: TeamTask | undefined = t
+  const seen = new Set<string>()
+  while (cur) {
+    const pid = parentOf(cur)
+    if (!pid || seen.has(pid)) break
+    seen.add(pid)
+    depth++
+    cur = tasks.find((x) => x.id === pid)
+  }
+  return depth
+}
+
+/** 사용자가 확인해야 하는 작업인지: 사용자의 검토 요청, 권한 승인 대기, 그리고 사용자가 직접 맡긴 작업의 실패 */
+export function needsUser(t: TeamTask): boolean {
+  return t.status === 'needs_review' || t.status === 'waiting_permission' || (t.status === 'failed' && !parentOf(t))
 }

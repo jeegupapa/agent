@@ -4,7 +4,7 @@ import { AnswerBox, extractQuestions } from './AnswerBox'
 import { Markdown } from '../components/Markdown'
 import { ToolChip } from '../components/ToolChip'
 import { EmployeeForm, TaskForm } from './TeamForms'
-import { EMPTY_RUNTIME, STATUS_LABEL, isActive, type TaskRuntime } from './runtime'
+import { EMPTY_RUNTIME, STATUS_LABEL, isActive, needsUser, parentOf, type TaskRuntime } from './runtime'
 import type { TeamRow } from './store'
 import { useModelCatalog } from '../models'
 import { modelShort } from '../../../shared/models'
@@ -40,6 +40,8 @@ export interface TeamViewProps {
   onStopTask: (id: string) => void
   /** 중단된 작업을 같은 세션에서 이어서 진행 */
   onResumeTask: (task: TeamTask) => void
+  /** 팀 대기 중인 작업: 지금까지 끝난 보고만 받아 이어서 진행 (기다리지 않고 넘어가기) */
+  onCollectReports: (task: TeamTask) => void
   /** 직원 한 명의 진행 중인 작업을 모두 중단 / 중단된 작업을 모두 이어서 진행 */
   onStopEmployee: (employeeId: string) => void
   onResumeEmployee: (employeeId: string) => void
@@ -75,10 +77,19 @@ function fmtDuration(from?: number, to?: number): string {
   return m < 60 ? `${m}분 ${s % 60}초` : `${Math.floor(m / 60)}시간 ${m % 60}분`
 }
 
-const GROUPS: { key: string; label: string; statuses: TeamTask['status'][] }[] = [
-  { key: 'attention', label: '확인이 필요한 작업', statuses: ['waiting_permission', 'needs_review', 'failed'] },
-  { key: 'active', label: '진행 중', statuses: ['running', 'changes_requested', 'queued'] },
-  { key: 'done', label: '완료·중단', statuses: ['approved', 'stopped'] }
+/** 더 진행되지 않는 작업: 승인됨, 중단됨, 그리고 직원이 맡긴 작업의 실패(맡긴 직원이 보고로 받아 처리한다) */
+const isClosed = (t: TeamTask): boolean => t.status === 'approved' || t.status === 'stopped' || (t.status === 'failed' && !!parentOf(t))
+
+// 사용자가 봐야 하는 것 / 팀 안에서 돌아가는 것 / 끝난 것
+const GROUPS: { key: string; label: string; hint?: string; has: (t: TeamTask) => boolean }[] = [
+  { key: 'attention', label: '확인이 필요한 작업', has: needsUser },
+  {
+    key: 'active',
+    label: '팀에서 진행 중',
+    hint: '직원끼리 맡기고 검토하는 중입니다. 사용자가 할 일은 없고, 열어 보거나 직접 개입할 수는 있습니다',
+    has: (t) => !needsUser(t) && !isClosed(t)
+  },
+  { key: 'done', label: '완료·중단', has: (t) => isClosed(t) }
 ]
 
 export function TeamView(p: TeamViewProps) {
@@ -97,7 +108,12 @@ export function TeamView(p: TeamViewProps) {
   const tasks = filterEmployee ? p.tasks.filter((t) => t.employeeId === filterEmployee) : p.tasks
   const selected = p.tasks.find((t) => t.id === p.selectedTaskId) ?? null
   const runningCount = p.tasks.filter((t) => isActive(t.status)).length
-  const reviewCount = p.tasks.filter((t) => t.status === 'needs_review' || t.status === 'waiting_permission').length
+  const reviewCount = p.tasks.filter(needsUser).length
+  /** 이 작업을 맡긴 직원의 이름 (사용자가 직접 맡긴 작업이면 빈 문자열) */
+  const leadName = (t: TeamTask): string => {
+    const lead = p.tasks.find((x) => x.id === parentOf(t))
+    return lead ? (empById.get(lead.employeeId)?.name ?? '') : ''
+  }
   // 직원을 가져올 수 있는 다른 팀
   const importable = p.teams.filter((t) => t.id !== p.teamId && t.employees > 0)
   const [notice, setNotice] = useState('')
@@ -310,11 +326,11 @@ export function TeamView(p: TeamViewProps) {
               </div>
             )}
             {GROUPS.map((g) => {
-              const list = tasks.filter((t) => g.statuses.includes(t.status))
+              const list = tasks.filter(g.has)
               if (list.length === 0) return null
               return (
                 <div key={g.key} className="task-group">
-                  <h4>
+                  <h4 title={g.hint}>
                     {g.label} <span className="muted">{list.length}</span>
                   </h4>
                   {list.map((t) => {
@@ -339,7 +355,8 @@ export function TeamView(p: TeamViewProps) {
                             )}
                           </div>
                           <div className="task-sub muted small">
-                            {e?.name ?? '삭제된 직원'} · {isActive(t.status) ? fmtDuration(t.startedAt) + ' 경과' : fmtTime(t.finishedAt ?? t.createdAt)}
+                            {e?.name ?? '삭제된 직원'}
+                            {leadName(t) && ` ← ${leadName(t)}`} · {isActive(t.status) ? fmtDuration(t.startedAt) + ' 경과' : fmtTime(t.finishedAt ?? t.createdAt)}
                             {t.progress.toolUses > 0 && ` · 도구 ${t.progress.toolUses}회`}
                             {isActive(t.status) && t.progress.lastTool && ` · ${t.progress.lastTool}`}
                           </div>
@@ -363,6 +380,17 @@ export function TeamView(p: TeamViewProps) {
               onRecheckPermissions={p.onRecheckPermissions}
               onStop={() => p.onStopTask(selected.id)}
               onResume={() => p.onResumeTask(selected)}
+              onCollect={() => p.onCollectReports(selected)}
+              lead={(() => {
+                const lead = p.tasks.find((x) => x.id === parentOf(selected))
+                const le = lead && empById.get(lead.employeeId)
+                return lead ? { id: lead.id, label: `${le?.emoji ?? ''} ${le?.name ?? '삭제된 직원'} · ${lead.title}` } : undefined
+              })()}
+              subtasks={p.tasks
+                .filter((x) => parentOf(x) === selected.id)
+                .sort((a, b) => a.createdAt - b.createdAt)
+                .map((x) => ({ task: x, employee: empById.get(x.employeeId) }))}
+              onOpenTask={p.onSelectTask}
               onRerun={() => p.onRerunTask(selected)}
               onDelete={() => {
                 if (confirm(`"${selected.title}" 작업을 삭제할까요?`)) {
@@ -424,6 +452,13 @@ function TaskDetail(p: {
   onRecheckPermissions: () => void
   onStop: () => void
   onResume: () => void
+  /** 팀 대기 중일 때: 지금까지의 보고만 받아 이어서 진행 */
+  onCollect: () => void
+  /** 이 작업을 맡긴 직원의 작업 (사용자가 직접 맡긴 작업이면 없음) */
+  lead?: { id: string; label: string }
+  /** 이 작업이 다른 직원에게 맡긴 작업들 */
+  subtasks: { task: TeamTask; employee?: Employee }[]
+  onOpenTask: (id: string) => void
   onRerun: () => void
   onDelete: () => void
   onReview: (decision: ReviewDecision, comment: string) => void
@@ -445,7 +480,8 @@ function TaskDetail(p: {
   const callById = (id: string) => rt.toolCalls.find((c) => c.id === id)
   // 보고서의 "확인 요청" 항목. 검토 대기 중일 때만 답변 칸을 보여준다
   const questions = t.status === 'needs_review' ? extractQuestions(t.report) : []
-  const canFollowUp = t.status === 'needs_review' || t.status === 'failed' || t.status === 'stopped' || t.status === 'approved'
+  // 직원끼리 검토 중인 작업(내부 검토)에도 사용자가 직접 답하거나 승인해서 개입할 수 있다
+  const canFollowUp = ['needs_review', 'internal_review', 'failed', 'stopped', 'approved'].includes(t.status)
   const sendComment = (decision: 'answered' | 'changes_requested'): void => {
     if (!comment.trim()) return
     p.onReview(decision, comment.trim())
@@ -502,6 +538,36 @@ function TaskDetail(p: {
           지시 내용
         </button>
       </div>
+
+      {(p.lead || p.subtasks.length > 0 || t.status === 'internal_review' || t.status === 'waiting_team') && (
+        <div className="task-flow small">
+          {p.lead && (
+            <div>
+              <span className="muted">맡긴 사람 </span>
+              <button className="linkish" onClick={() => p.onOpenTask(p.lead!.id)} title="이 작업을 맡긴 직원의 작업을 엽니다. 보고와 질문은 사용자가 아니라 그 직원에게 갑니다">
+                {p.lead.label}
+              </button>
+              {t.status === 'internal_review' && <span className="muted"> · 보고를 보냈고 검토를 기다리는 중입니다</span>}
+              {t.status === 'approved' && t.approvedBy && <span className="muted"> · {t.approvedBy}이(가) 승인했습니다</span>}
+            </div>
+          )}
+          {p.subtasks.length > 0 && (
+            <div className="task-subs">
+              <span className="muted">맡긴 작업 {p.subtasks.length}건</span>
+              {p.subtasks.map(({ task: c, employee: ce }) => (
+                <button key={c.id} className="task-sub-row" onClick={() => p.onOpenTask(c.id)}>
+                  <span>{ce?.emoji ?? '❔'}</span>
+                  <span className="task-sub-title">
+                    {ce?.name ?? '삭제된 직원'} · {c.title}
+                  </span>
+                  <span className={`task-status ${c.status}`}>{STATUS_LABEL[c.status]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {t.status === 'waiting_team' && <div className="muted">맡긴 작업이 모두 끝나면 보고를 받아 자동으로 이어서 진행합니다.</div>}
+        </div>
+      )}
 
       {tab === 'report' && (
         <div className="task-report">
@@ -588,9 +654,14 @@ function TaskDetail(p: {
       )}
 
       <div className="task-actions">
-        {active && (
-          <button className="danger" onClick={p.onStop}>
+        {(active || t.status === 'waiting_team') && (
+          <button className="danger" onClick={p.onStop} title={t.status === 'waiting_team' ? '보고를 기다리는 것을 그만둡니다. 맡긴 작업은 계속 진행됩니다' : undefined}>
             중단
+          </button>
+        )}
+        {t.status === 'waiting_team' && (
+          <button onClick={p.onCollect} title="맡긴 작업이 다 끝나기를 기다리지 않고, 지금까지 끝난 보고만 받아 이어서 진행합니다">
+            보고 받고 이어서 진행
           </button>
         )}
         {t.status === 'stopped' && (
@@ -625,7 +696,7 @@ function TaskDetail(p: {
             <button disabled={!comment.trim()} onClick={() => sendComment('changes_requested')} title="결과물을 고치라고 지시합니다">
               수정 요청
             </button>
-            {t.status === 'needs_review' && (
+            {(t.status === 'needs_review' || t.status === 'internal_review') && (
               <button className="primary" onClick={() => p.onReview('approved', comment.trim())}>
                 승인
               </button>

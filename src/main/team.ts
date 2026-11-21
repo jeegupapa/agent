@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { ClaudeRunner, drawAttention, type RunnerSink } from './claude'
-import { delegateRules } from '../shared/delegate'
+import { coordinatorRules, leadReportRules } from '../shared/delegate'
 import { extractJsonObjects } from '../shared/json'
 import {
   EMPLOYEE_PRESETS,
@@ -80,9 +80,10 @@ export class TeamRunner {
       `# 역할\n당신의 이름은 "${e.name}", 직함은 "${e.role}" 입니다. 전문 분야: ${e.specialty}\n\n` +
       `# 지시문\n${e.instructions.trim()}` +
       (args.memory ? `\n\n${args.memory.trim()}` : '') +
-      // 조율 역할(PM 등)은 같은 팀 직원에게 일을 맡길 수 있다
-      (args.roster !== undefined ? delegateRules(args.roster) : '') +
-      TEAM_REPORT_RULES
+      // 조율 역할(PM·기획자)은 같은 팀 직원에게 일을 맡기고 보고를 받아 검토한다
+      (args.roster !== undefined ? coordinatorRules({ roster: args.roster, frontDoor: !args.lead }) : '') +
+      // 직원에게 받은 일이면 보고와 질문이 사용자가 아니라 그 직원에게 간다
+      (args.lead ? leadReportRules(args.lead) : TEAM_REPORT_RULES)
     )
   }
 

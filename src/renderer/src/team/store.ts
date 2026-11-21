@@ -178,14 +178,23 @@ export function useTeamStore(user: fb.FbUser | null, firebaseEnabled: boolean): 
     [useFs, user]
   )
 
+  // 일부 필드만 바꾼다. 작업 전체를 다시 쓰지 않으므로, 같은 순간에 다른 곳에서 바꾼 필드(상태 등)를 옛 값으로 덮지 않는다
   const patchTask = useCallback(
     (id: string, patch: Partial<TeamTask> | ((t: TeamTask) => Partial<TeamTask>)) => {
-      const t = currentRef.current.tasks.find((x) => x.id === id) ?? local.tasks.find((x) => x.id === id)
-      if (!t) return
-      const p = typeof patch === 'function' ? patch(t) : patch
-      upsertTask({ ...t, ...p })
+      setLocal((l) => {
+        const t = l.tasks.find((x) => x.id === id)
+        if (!t) return l
+        const p = typeof patch === 'function' ? patch(t) : patch
+        return Object.keys(p).length === 0 ? l : { ...l, tasks: l.tasks.map((x) => (x.id === id ? { ...x, ...p } : x)) }
+      })
+      if (useFs && user) {
+        const t = currentRef.current.tasks.find((x) => x.id === id)
+        if (!t) return
+        const p = typeof patch === 'function' ? patch(t) : patch
+        fb.patchDocument(user.uid, 'tasks', id, p).catch((err) => setError(String(err)))
+      }
     },
-    [upsertTask, local.tasks]
+    [useFs, user]
   )
 
   return {
@@ -214,7 +223,7 @@ export interface TeamRow {
   attention: number
 }
 
-const ACTIVE = ['running', 'waiting_permission', 'changes_requested']
+const ACTIVE = ['running', 'waiting_permission', 'changes_requested', 'waiting_team', 'internal_review']
 const ATTENTION = ['needs_review', 'waiting_permission', 'failed']
 
 /** 새로 만든 팀의 임시 이름. 세션에 첫 메시지가 생기면 그 제목으로 바뀐다 */

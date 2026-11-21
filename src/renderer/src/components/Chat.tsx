@@ -10,7 +10,7 @@ export type ChatItem =
   | { id: string; type: 'assistant'; text: string; streaming: boolean }
   | { id: string; type: 'tool'; callId: string }
   | { id: string; type: 'system'; text: string; isError?: boolean }
-  /** 팀장이 요청을 직원 작업으로 배분한 결과. 작업 상태는 tasks 에서 실시간으로 읽는다 */
+  /** 요청을 팀(PM)에게 넘긴 결과. 작업 상태는 tasks 에서 실시간으로 읽는다 */
   | { id: string; type: 'dispatch'; summary: string; taskIds: string[] }
   /** 직원 보고서 (라운드별 스냅샷). 승인·수정 요청 버튼은 그 라운드가 최신일 때만 */
   | { id: string; type: 'report'; taskId: string; round: number; report?: string; error?: string }
@@ -26,14 +26,11 @@ interface Props {
   insertRequest: { text: string; nonce: number } | null
   /** 폴더·브라우저 패널에서 첨부를 밀어넣을 때 */
   attachRequest: { attachments: Attachment[]; nonce: number } | null
-  /** 켜져 있으면 입력한 요청을 팀장이 받아 직원에게 배분한다 */
+  /** 켜져 있으면 입력한 요청을 팀의 PM 이 받는다 */
   teamMode: boolean
   tasks: TeamTask[]
   employees: Employee[]
   onToggleTeamMode: () => void
-  /** 자동 진행: 배분한 작업이 끝나면 팀장이 보고를 검토해 다음 단계를 이어서 배분 */
-  autoContinue: boolean
-  onToggleAutoContinue: () => void
   onSend: (prompt: string, attachments: Attachment[]) => void
   onInterrupt: () => void
   onSelectTool: (id: string) => void
@@ -198,7 +195,7 @@ export function Chat(p: Props) {
           (p.teamMode ? (
             <div className="empty">
               <h2>팀에게 무엇을 맡길까요?</h2>
-              <p>요청을 적으면 팀장 에이전트가 읽고 적임 직원에게 작업으로 배분합니다. 맞는 직원이 없으면 템플릿에서 자동으로 채용합니다.</p>
+              <p>요청을 적으면 팀의 PM 이 받습니다. PM 이 기획자와 전문가에게 일을 맡기고, 결과를 검토하고, 직원의 질문에도 직접 답합니다. 필요한 직원은 템플릿에서 자동으로 채용합니다.</p>
               <p className="hint">
                 직원들은 동시에 작업하고, 끝나면 보고서가 이 채팅으로 돌아옵니다. 여기서 바로 승인하거나 수정을 요청할 수
                 있습니다.
@@ -272,7 +269,7 @@ export function Chat(p: Props) {
                   <div className="team-card">
                     <div className="team-card-head">
                       <span className="tc-avatar lead">🧭</span>
-                      <b>팀장 배분</b>
+                      <b>PM 접수</b>
                       <span className="muted small">작업 {it.taskIds.length}건</span>
                     </div>
                     {it.summary && <DispatchSummary text={it.summary} />}
@@ -346,28 +343,16 @@ export function Chat(p: Props) {
           </ul>
         )}
         <div className="composer-bar">
-          <label className={`team-toggle ${p.teamMode ? 'on' : ''}`} title="켜면 요청을 팀장이 받아 직원들에게 배분합니다">
+          <label className={`team-toggle ${p.teamMode ? 'on' : ''}`} title="켜면 요청을 팀의 PM 이 받습니다. PM 이 기획자와 전문가에게 일을 맡기고, 결과를 검토해 정리된 보고만 돌려줍니다">
             <input type="checkbox" checked={p.teamMode} onChange={p.onToggleTeamMode} disabled={p.running} />
             <span className="knob" />
             👥 팀에게 맡기기
           </label>
-          {p.teamMode && (
-            <label
-              className={`team-toggle ${p.autoContinue ? 'on' : ''}`}
-              title="켜면 맡긴 작업이 끝날 때마다 팀장이 보고를 검토해 다음 단계(구현 → 검증 등)를 이어서 배분합니다. 사용자의 결정이 꼭 필요할 때와 4차까지 간 뒤에는 멈춥니다"
-            >
-              <input type="checkbox" checked={p.autoContinue} onChange={p.onToggleAutoContinue} />
-              <span className="knob" />
-              자동 진행
-            </label>
-          )}
           <span className="muted small">
             {p.teamMode
               ? activeCount > 0
                 ? `직원 ${activeCount}명이 작업 중 · 보고서는 이 채팅으로 옵니다`
-                : p.autoContinue
-                  ? '팀장이 배분 → 직원 작업 → 보고 검토 → 다음 단계 배분을 끝날 때까지 이어 갑니다'
-                  : '팀장이 배분 → 직원들이 동시에 작업 → 보고서가 여기로 돌아옵니다'
+                : 'PM 이 받아 팀에 맡기고 검토까지 한 뒤, 정리된 보고만 여기로 돌아옵니다'
               : 'Claude Code 가 직접 처리합니다'}
           </span>
         </div>

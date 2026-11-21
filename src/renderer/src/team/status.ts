@@ -3,9 +3,12 @@
 import type { Employee, TeamTask } from '../../../shared/types'
 import { STATUS_LABEL, isActive } from './runtime'
 
-/** 작업을 시작할 때 팀 현황을 함께 받을 직원인지. 따로 정하지 않았으면 직함으로 판단한다 (PM, 매니저, 팀장) */
+/**
+ * 조율 역할인지: 작업을 시작할 때 팀 현황을 받고, 다른 직원에게 일을 맡기고 보고를 받아 검토한다.
+ * 따로 정하지 않았으면 직함으로 판단한다 (PM, 매니저, 팀장, 기획자)
+ */
 export function isTeamAware(e: Pick<Employee, 'role' | 'teamAware'>): boolean {
-  return e.teamAware ?? /PM|매니저|팀장|manager/i.test(e.role)
+  return e.teamAware ?? /PM|매니저|팀장|manager|기획자|planner/i.test(e.role)
 }
 
 function ago(ms: number | undefined, now: number): string {
@@ -37,13 +40,14 @@ export function renderTeamStatus(employees: Employee[], tasks: TeamTask[], now =
     return e ? `${e.name}(${e.role})` : '삭제된 직원'
   }
   const list = tasks.filter((t) => t.id !== exceptTaskId)
-  const active = list.filter((t) => isActive(t.status))
+  const active = list.filter((t) => isActive(t.status) || t.status === 'waiting_team')
   const waiting = list.filter((t) => t.status === 'needs_review')
+  const internal = list.filter((t) => t.status === 'internal_review')
   const recent = list
-    .filter((t) => !isActive(t.status) && t.status !== 'needs_review' && t.status !== 'queued')
+    .filter((t) => !isActive(t.status) && !['needs_review', 'internal_review', 'waiting_team', 'queued'].includes(t.status))
     .sort((a, b) => (b.finishedAt ?? b.createdAt) - (a.finishedAt ?? a.createdAt))
     .slice(0, 8)
-  if (active.length + waiting.length + recent.length === 0) return ''
+  if (active.length + waiting.length + internal.length + recent.length === 0) return ''
 
   const lines: string[] = [`# 팀 작업 현황 (${new Date(now).toLocaleString('ko-KR')} 기준)`]
   const idle = employees.filter((e) => !active.some((t) => t.employeeId === e.id))
@@ -58,10 +62,18 @@ export function renderTeamStatus(employees: Employee[], tasks: TeamTask[], now =
         `도구 ${p.toolUses}회`,
         p.lastTool ? `지금 ${p.lastTool}` : '',
         t.status === 'waiting_permission' ? '사용자의 권한 승인을 기다리는 중' : '',
-        t.status === 'changes_requested' ? `${t.round}차 수정 반영 중` : ''
+        t.status === 'changes_requested' ? `${t.round}차 수정 반영 중` : '',
+        t.status === 'waiting_team' ? '다른 직원에게 맡긴 작업의 보고를 기다리는 중' : ''
       ].filter(Boolean)
       lines.push(`- [${STATUS_LABEL[t.status]}] ${name(t.employeeId)} — "${t.title}" (${bits.join(', ')})`)
       if (p.lastText) lines.push(`  최근 발언: ${oneLine(p.lastText, 200)}`)
+    }
+  }
+  if (internal.length) {
+    lines.push('', '## 끝나서 맡긴 직원의 검토를 기다리는 작업')
+    for (const t of internal) {
+      lines.push(`- ${name(t.employeeId)} — "${t.title}" (끝남 ${ago(t.finishedAt, now)})`)
+      if (t.report) lines.push(`  보고 요약: ${reportHead(t.report, 200)}`)
     }
   }
   if (waiting.length) {

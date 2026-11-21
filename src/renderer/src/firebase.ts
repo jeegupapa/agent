@@ -16,6 +16,7 @@ import {
   collection,
   connectFirestoreEmulator,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   initializeFirestore,
@@ -278,6 +279,17 @@ export async function setDocument(uid: string, name: string, id: string, data: o
   // undefined 제거
   const clean = JSON.parse(JSON.stringify(data))
   await withTimeout(setDoc(doc(userCol(uid, name), id), clean), 25_000, WRITE_TIMEOUT_HINT)
+}
+
+/**
+ * 문서의 일부 필드만 바꾼다. 문서 전체를 다시 쓰지 않으므로, 조금 전에 다른 곳에서 바꾼 필드를 옛 값으로 덮지 않는다.
+ * 값이 undefined 인 필드는 지운다.
+ */
+export async function patchDocument(uid: string, name: string, id: string, patch: object): Promise<void> {
+  const data: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(patch)) data[k] = v === undefined ? deleteField() : JSON.parse(JSON.stringify(v))
+  if (Object.keys(data).length === 0) return
+  await withTimeout(setDoc(doc(userCol(uid, name), id), data, { merge: true }), 25_000, WRITE_TIMEOUT_HINT)
 }
 
 export async function deleteDocument(uid: string, name: string, id: string): Promise<void> {
