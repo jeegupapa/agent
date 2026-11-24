@@ -5,6 +5,7 @@ import type {
   AppConfig,
   AppConfigView,
   Attachment,
+  AttachPick,
   AuthStatus,
   ClaudeEvent,
   CreateSkillArgs,
@@ -61,6 +62,9 @@ const api = {
 
   // 첨부 파일
   pickFiles: (): Promise<Attachment[]> => ipcRenderer.invoke('dialog:pick-files'),
+  pickAttachments: (kind: AttachPick): Promise<Attachment[]> => ipcRenderer.invoke('attach:pick', kind),
+  attachmentInfo: (paths: string[]): Promise<Attachment[]> => ipcRenderer.invoke('attach:info', paths),
+  clipboardImage: (): Promise<Attachment | null> => ipcRenderer.invoke('attach:from-clipboard'),
   /** 끌어다 놓은 File 객체의 실제 경로 (렌더러에서는 file.path 를 쓸 수 없다) */
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   saveClipboardImage: (args: { base64: string; mime: string }): Promise<Attachment> => ipcRenderer.invoke('attach:save-clipboard', args),

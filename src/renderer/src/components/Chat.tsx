@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
-import type { Attachment, Employee, ReviewDecision, TeamTask, ToolCallRecord } from '../../../shared/types'
+import type { Attachment, AttachPick, Employee, ReviewDecision, TeamTask, ToolCallRecord } from '../../../shared/types'
 import { AnswerBox, extractQuestions } from '../team/AnswerBox'
 import { ToolChip } from './ToolChip'
 import { Markdown } from './Markdown'
@@ -66,10 +66,12 @@ function DispatchSummary({ text }: { text: string }) {
 }
 
 function AttachChip(p: { a: Attachment; preview?: string; onRemove?: () => void }) {
-  const isImage = p.a.mime?.startsWith('image/')
+  const isFolder = p.a.kind === 'folder'
+  const isImage = !isFolder && p.a.mime?.startsWith('image/')
+  const icon = isFolder ? '📁' : isImage ? '🖼️' : p.a.mime === 'application/pdf' ? '📕' : '📄'
   return (
-    <span className="attach-chip" title={p.a.path}>
-      {isImage && p.preview ? <img src={p.preview} alt="" /> : <span className="attach-icon">{isImage ? '🖼️' : p.a.mime === 'application/pdf' ? '📕' : '📄'}</span>}
+    <span className={`attach-chip ${isFolder ? 'folder' : ''}`} title={p.a.path}>
+      {isImage && p.preview ? <img src={p.preview} alt="" /> : <span className="attach-icon">{icon}</span>}
       <span className="attach-name">{p.a.name}</span>
       {p.a.size !== undefined && <span className="attach-size">{fmtSize(p.a.size)}</span>}
       {p.onRemove && (
@@ -87,6 +89,11 @@ export function Chat(p: Props) {
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [, setPreviewVersion] = useState(0)
   const [dragging, setDragging] = useState(false)
+  /** (+) 메뉴가 열려 있는지 */
+  const [attachMenu, setAttachMenu] = useState(false)
+  /** 입력창 위에 잠깐 띄우는 안내 (클립보드가 비었을 때 등) */
+  const [attachNote, setAttachNote] = useState('')
+  const attachMenuRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -109,16 +116,43 @@ export function Chat(p: Props) {
     }
     textareaRef.current?.focus()
   }
-  const pickFiles = async (): Promise<void> => addAttachments(await window.api.pickFiles())
-  const onDrop = (e: DragEvent): void => {
+  const showAttachNote = (text: string): void => {
+    setAttachNote(text)
+    window.setTimeout(() => setAttachNote((t) => (t === text ? '' : t)), 3000)
+  }
+  /** (+) 메뉴에서 고른 종류로 첨부한다 */
+  const pickAttach = async (kind: AttachPick | 'clipboard'): Promise<void> => {
+    setAttachMenu(false)
+    if (kind === 'clipboard') {
+      const a = await window.api.clipboardImage()
+      if (a) addAttachments([a])
+      else showAttachNote('클립보드에 이미지가 없습니다. 화면을 캡처하거나 이미지를 복사한 뒤 다시 누르세요.')
+      return
+    }
+    addAttachments(await window.api.pickAttachments(kind))
+  }
+  // 메뉴 밖을 누르거나 Esc 를 누르면 닫는다
+  useEffect(() => {
+    if (!attachMenu) return
+    const onDown = (e: MouseEvent): void => {
+      if (attachMenuRef.current && !attachMenuRef.current.contains(e.target as Node)) setAttachMenu(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setAttachMenu(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [attachMenu])
+  const onDrop = async (e: DragEvent): Promise<void> => {
     e.preventDefault()
     setDragging(false)
-    const files = [...e.dataTransfer.files]
-    addAttachments(
-      files
-        .map((f) => ({ name: f.name, path: window.api.pathForFile(f), size: f.size, mime: f.type || undefined }))
-        .filter((a) => a.path)
-    )
+    // 폴더도 끌어다 놓을 수 있다. 파일인지 폴더인지는 main 에서 확인한다
+    const paths = [...e.dataTransfer.files].map((f) => window.api.pathForFile(f)).filter(Boolean)
+    if (paths.length) addAttachments(await window.api.attachmentInfo(paths))
   }
   const onPaste = async (e: ClipboardEvent): Promise<void> => {
     const images = [...e.clipboardData.items].filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
@@ -356,6 +390,7 @@ export function Chat(p: Props) {
               : 'Claude Code 가 직접 처리합니다'}
           </span>
         </div>
+        {attachNote && <div className="attach-note">{attachNote}</div>}
         {attachments.length > 0 && (
           <div className="attach-list">
             {attachments.map((a) => (
@@ -375,12 +410,50 @@ export function Chat(p: Props) {
             if (!dragging) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
+          onDrop={(e) => void onDrop(e)}
         >
-          <div className="composer-left">
-            <button className="attach-btn" title="파일 첨부 (끌어다 놓기, 이미지 붙여넣기도 됩니다)" onClick={pickFiles} disabled={p.running}>
+          <div className="composer-left attach-wrap" ref={attachMenuRef}>
+            <button
+              className={`attach-btn ${attachMenu ? 'open' : ''}`}
+              title="첨부 (파일·이미지·폴더, 끌어다 놓기와 붙여넣기도 됩니다)"
+              onClick={() => setAttachMenu((v) => !v)}
+              disabled={p.running}
+            >
               +
             </button>
+            {attachMenu && (
+              <div className="attach-menu" role="menu">
+                <button role="menuitem" onClick={() => void pickAttach('file')}>
+                  <span className="am-icon">📄</span>
+                  <span className="am-text">
+                    <b>파일</b>
+                    <small>문서·코드·PDF 등 (여러 개 선택)</small>
+                  </span>
+                </button>
+                <button role="menuitem" onClick={() => void pickAttach('image')}>
+                  <span className="am-icon">🖼️</span>
+                  <span className="am-text">
+                    <b>이미지</b>
+                    <small>PNG·JPG·GIF·WEBP·SVG</small>
+                  </span>
+                </button>
+                <button role="menuitem" onClick={() => void pickAttach('folder')}>
+                  <span className="am-icon">📁</span>
+                  <span className="am-text">
+                    <b>폴더</b>
+                    <small>폴더째 넘겨 살펴보게 하기</small>
+                  </span>
+                </button>
+                <div className="am-sep" />
+                <button role="menuitem" onClick={() => void pickAttach('clipboard')}>
+                  <span className="am-icon">📋</span>
+                  <span className="am-text">
+                    <b>클립보드 이미지</b>
+                    <small>캡처·복사해 둔 이미지 붙이기</small>
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
           <textarea
             ref={textareaRef}
@@ -388,8 +461,8 @@ export function Chat(p: Props) {
             onPaste={onPaste}
             placeholder={
               p.teamMode
-                ? '팀에게 맡길 요청을 적으세요… (Enter 전송, Shift+Enter 줄바꿈, 파일은 + 또는 끌어다 놓기)'
-                : '메시지를 입력하세요… (Enter 전송, Shift+Enter 줄바꿈, / 로 스킬 선택, 파일은 + 또는 끌어다 놓기)'
+                ? '팀에게 맡길 요청을 적으세요… (Enter 전송, Shift+Enter 줄바꿈, 첨부는 + 또는 끌어다 놓기)'
+                : '메시지를 입력하세요… (Enter 전송, Shift+Enter 줄바꿈, / 로 스킬 선택, 첨부는 + 또는 끌어다 놓기)'
             }
             rows={3}
             onChange={(e) => {

@@ -1,6 +1,6 @@
 {
   "name": "claude-cli-studio",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Electron + React desktop UI for Claude Code (Agent SDK)",
   "repository": "github:jeegupapa/agent",
   "main": "./out/main/index.js",

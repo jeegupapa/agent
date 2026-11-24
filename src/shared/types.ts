@@ -174,6 +174,8 @@ export interface SendPromptArgs {
   allowedTools?: string[]
   disallowedTools?: string[]
   maxTurns?: number
+  /** 작업 폴더 밖에서 함께 읽고 쓸 수 있게 할 폴더 (--add-dir). 첨부한 폴더가 들어온다 */
+  addDirs?: string[]
 }
 
 // ---------- 팀 (직원 에이전트) ----------
@@ -354,7 +356,12 @@ export interface Attachment {
   size?: number
   /** image/png 등. 모르면 비움 */
   mime?: string
+  /** 폴더를 통째로 첨부한 경우 'folder'. 비우면 파일 */
+  kind?: 'file' | 'folder'
 }
+
+/** 채팅 (+) 메뉴에서 고르는 첨부 종류 */
+export type AttachPick = 'file' | 'image' | 'folder'
 
 // ---------- 메모리 (채팅에서 "기억해" 로 저장한 내용) ----------
 

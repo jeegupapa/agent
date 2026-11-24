@@ -207,6 +207,8 @@ export class ClaudeRunner {
 
     const options: Options = {
       cwd: args.cwd,
+      // 첨부한 폴더는 작업 폴더처럼 읽고 쓸 수 있게 한다
+      additionalDirectories: args.addDirs?.length ? args.addDirs : undefined,
       resume: args.sessionId,
       permissionMode: args.permissionMode,
       includePartialMessages: true,

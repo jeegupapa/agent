@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Notification, ipcMain, dialog, shell, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, Menu, Notification, clipboard, ipcMain, dialog, shell, type MenuItemConstructorOptions } from 'electron'
 import { execFile, spawn } from 'child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { homedir, hostname } from 'os'
@@ -15,6 +15,7 @@ import type {
   ActiveWork,
   AppConfig,
   Attachment,
+  AttachPick,
   AuthStatus,
   CreateSkillArgs,
   DispatchArgs,
@@ -67,11 +68,24 @@ function mimeOf(p: string): string {
 function attachmentInfo(p: string, mime?: string): Attachment {
   let size: number | undefined
   try {
-    size = statSync(p).size
+    const st = statSync(p)
+    if (st.isDirectory()) return { name: basename(p) || p, path: p, kind: 'folder' }
+    size = st.size
   } catch {
     /* 없으면 비움 */
   }
-  return { name: basename(p), path: p, size, mime: mime ?? mimeOf(p) ?? undefined }
+  return { name: basename(p), path: p, size, mime: mime ?? (mimeOf(p) || undefined) }
+}
+
+/** 붙여넣거나 캡처한 이미지를 userData/attachments 에 저장하고 첨부 정보로 돌려준다 */
+function saveAttachmentImage(data: Buffer, mime: string, prefix: string): Attachment {
+  const ext = mime === 'image/jpeg' ? 'jpg' : mime === 'image/gif' ? 'gif' : mime === 'image/webp' ? 'webp' : 'png'
+  const dir = join(app.getPath('userData'), 'attachments')
+  mkdirSync(dir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const file = join(dir, `${prefix}-${stamp}.${ext}`)
+  writeFileSync(file, data)
+  return attachmentInfo(file, mime)
 }
 
 /**
@@ -413,16 +427,51 @@ app.whenReady().then(() => {
     if (result.canceled) return []
     return result.filePaths.map((p) => attachmentInfo(p))
   })
-  // 클립보드에서 붙여넣은 이미지는 userData/attachments 에 파일로 저장하고 그 경로를 쓴다
-  ipcMain.handle('attach:save-clipboard', (_e, args: { base64: string; mime: string }) => {
-    const ext = args.mime === 'image/jpeg' ? 'jpg' : args.mime === 'image/gif' ? 'gif' : args.mime === 'image/webp' ? 'webp' : 'png'
-    const dir = join(app.getPath('userData'), 'attachments')
-    mkdirSync(dir, { recursive: true })
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const file = join(dir, `clipboard-${stamp}.${ext}`)
-    writeFileSync(file, Buffer.from(args.base64, 'base64'))
-    return attachmentInfo(file, args.mime)
+  // (+) 메뉴: 종류별로 고르는 창을 띄운다
+  ipcMain.handle('attach:pick', async (_e, kind: AttachPick) => {
+    const result = await dialog.showOpenDialog(
+      kind === 'folder'
+        ? { title: '첨부할 폴더', properties: ['openDirectory', 'multiSelections'] }
+        : kind === 'image'
+          ? {
+              title: '첨부할 이미지',
+              properties: ['openFile', 'multiSelections'],
+              filters: [{ name: '이미지', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }]
+            }
+          : {
+              title: '첨부할 파일',
+              properties: ['openFile', 'multiSelections'],
+              filters: [
+                { name: '모든 파일', extensions: ['*'] },
+                { name: '문서', extensions: ['pdf', 'md', 'txt', 'csv', 'json', 'docx', 'xlsx', 'pptx', 'hwp'] },
+                { name: '코드', extensions: ['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'cs', 'cpp', 'c', 'h', 'go', 'rs', 'html', 'css', 'sql', 'yml', 'yaml'] }
+              ]
+            }
+    )
+    if (result.canceled) return []
+    return result.filePaths.map((p) => attachmentInfo(p))
   })
+  // 끌어다 놓은 경로가 파일인지 폴더인지 확인한다
+  ipcMain.handle('attach:info', (_e, paths: string[]) => paths.filter(Boolean).map((p) => attachmentInfo(p)))
+  // (+) 메뉴의 "클립보드 이미지": 복사해 둔 이미지(캡처 등)를 파일로 저장해 첨부한다. 없으면 null
+  ipcMain.handle('attach:from-clipboard', async () => {
+    try {
+      for (const item of await clipboard.read()) {
+        const type = item.types.find((t) => t.startsWith('image/'))
+        if (!type) continue
+        const blob = await item.getType(type)
+        if (!(blob instanceof Blob) || blob.size === 0) continue
+        return saveAttachmentImage(Buffer.from(await blob.arrayBuffer()), blob.type || type, 'clipboard')
+      }
+    } catch {
+      /* 읽을 수 없으면 비어 있는 것으로 본다 */
+    }
+    return null
+  })
+  // 입력창에 붙여넣은 이미지는 userData/attachments 에 파일로 저장하고 그 경로를 쓴다
+  ipcMain.handle('attach:save-clipboard', (_e, args: { base64: string; mime: string }) =>
+    saveAttachmentImage(Buffer.from(args.base64, 'base64'), args.mime, 'clipboard')
+  )
   // 이미지 미리보기용 data URL (8MB 이하만)
   ipcMain.handle('attach:preview', (_e, p: string) => {
     try {

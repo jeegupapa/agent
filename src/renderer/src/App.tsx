@@ -1337,12 +1337,14 @@ export default function App() {
     if (teamChat) return dispatchToTeam(rawPrompt, attachments)
     // 첨부 파일은 경로로 넘긴다. Claude Code 의 Read 도구가 텍스트·이미지·PDF 를 읽는다
     const prompt = withAttachments(rawPrompt, attachments)
+    // 첨부한 폴더는 작업 폴더 밖이어도 읽을 수 있게 --add-dir 로 넘긴다
+    const addDirs = attachments.filter((a) => a.kind === 'folder').map((a) => a.path)
     setItems((prev) => [...prev, { id: `u-${Date.now()}`, type: 'user', text: rawPrompt, attachments: attachments.length ? attachments : undefined }])
     setRunning(true)
     setStatus('요청 중…')
     try {
       try {
-        await window.api.send({ prompt, cwd, sessionId, permissionMode, systemPromptAppend: memoryText })
+        await window.api.send({ prompt, cwd, sessionId, permissionMode, systemPromptAppend: memoryText, addDirs })
       } catch (err) {
         // Firestore 에서 복원한 세션은 다른 PC 에서 만든 것일 수 있어 resume 이 실패한다 → 새 세션으로 다시 보낸다
         const msg = err instanceof Error ? err.message : String(err)
@@ -1358,7 +1360,7 @@ export default function App() {
               text: '이전 세션을 이 PC 에서 이어갈 수 없어 새 세션으로 시작합니다.'
             }
           ])
-          await window.api.send({ prompt, cwd, sessionId: undefined, permissionMode, systemPromptAppend: memoryText })
+          await window.api.send({ prompt, cwd, sessionId: undefined, permissionMode, systemPromptAppend: memoryText, addDirs })
         } else {
           throw err
         }
@@ -1773,11 +1775,20 @@ export default function App() {
   )
 }
 
-/** 첨부 파일 경로를 프롬프트 끝에 덧붙인다. 직원 작업 지시에도 그대로 들어간다 */
+/** 첨부를 종류별로 프롬프트 끝에 덧붙인다. 직원 작업 지시에도 그대로 들어간다 */
 function withAttachments(prompt: string, atts: Attachment[]): string {
   if (atts.length === 0) return prompt
-  const lines = atts.map((a) => `- ${a.path}${a.mime ? ` (${a.mime})` : ''}`)
-  return `${prompt.trim() || '첨부한 파일을 확인하고 내용을 설명해 주세요.'}\n\n첨부 파일 (Read 도구로 읽어서 참고하세요):\n${lines.join('\n')}`
+  const folders = atts.filter((a) => a.kind === 'folder')
+  const images = atts.filter((a) => a.kind !== 'folder' && a.mime?.startsWith('image/'))
+  const files = atts.filter((a) => a.kind !== 'folder' && !a.mime?.startsWith('image/'))
+  const line = (a: Attachment): string => `- ${a.path}${a.mime ? ` (${a.mime})` : ''}`
+  const parts: string[] = []
+  if (images.length) parts.push(`첨부 이미지 (Read 도구로 열어서 보세요):\n${images.map(line).join('\n')}`)
+  if (files.length) parts.push(`첨부 파일 (Read 도구로 읽어서 참고하세요):\n${files.map(line).join('\n')}`)
+  if (folders.length)
+    parts.push(`첨부 폴더 (Glob·Grep 으로 구조를 살펴보고 필요한 파일을 Read 로 읽으세요):\n${folders.map(line).join('\n')}`)
+  const fallback = folders.length && !images.length && !files.length ? '첨부한 폴더를 살펴보고 구성을 설명해 주세요.' : '첨부한 파일을 확인하고 내용을 설명해 주세요.'
+  return `${prompt.trim() || fallback}\n\n${parts.join('\n\n')}`
 }
 
 export function isEditTool(name: string): boolean {

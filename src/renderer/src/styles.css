@@ -630,7 +630,18 @@ button.ghost-btn:hover { border-color: var(--border); }
 .composer.dragging { outline: 2px dashed var(--accent); outline-offset: -4px; }
 .composer-left { display: flex; flex-direction: column; justify-content: flex-end; }
 button.attach-btn { width: 36px; height: 36px; padding: 0; font-size: 20px; line-height: 1; border-radius: 8px; color: var(--muted); }
-button.attach-btn:hover { color: var(--text); border-color: var(--accent); }
+button.attach-btn:hover, button.attach-btn.open { color: var(--text); border-color: var(--accent); }
+.attach-wrap { position: relative; }
+.attach-menu { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 900; min-width: 240px; padding: 4px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); display: flex; flex-direction: column; }
+.attach-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; background: transparent; border: none; border-radius: 6px; text-align: left; color: var(--text); }
+.attach-menu button:hover { background: var(--bg-3); }
+.attach-menu .am-icon { font-size: 18px; width: 22px; text-align: center; }
+.attach-menu .am-text { display: flex; flex-direction: column; line-height: 1.25; }
+.attach-menu .am-text b { font-weight: 600; font-size: 13px; }
+.attach-menu .am-text small { color: var(--muted); font-size: 11px; }
+.attach-menu .am-sep { height: 1px; background: var(--border); margin: 4px 6px; }
+.attach-note { font-size: 12px; color: var(--muted); padding: 0 2px 6px; }
+.attach-chip.folder { border-style: dashed; }
 .attach-list { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 2px 6px; }
 .attach-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); font-size: 12px; max-width: 260px; }
 .attach-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
